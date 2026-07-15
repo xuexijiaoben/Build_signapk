@@ -150,7 +150,7 @@ jobs:
           jar tf "$BC_PKIX" | head -3
 
       # 【核心替换步骤】移除repo，单独浅克隆build+libcore，彻底解决同步超时/路径报错
-      - name: Clone Minimal AOSP Source (Official Google Source, No Queue)
+      - name: Clone Minimal AOSP Source (Official Google Source, Fix tag missing)
         run: |
           set -eo pipefail
           git config --global http.postBuffer 524288000
@@ -163,23 +163,22 @@ jobs:
           mkdir -p "$AOSP_DIR"
           cd "$AOSP_DIR"
 
-          # 原生谷歌地址，无国内限流排队
+          # Clone platform/build directly with target tag
           if [ ! -d build/.git ]; then
-            git clone --depth 1 --single-branch https://android.googlesource.com/platform/build build
+            git clone --depth 1 --branch "$TARGET_TAG" https://android.googlesource.com/platform/build build
           fi
           cd build
-          git fetch --depth 1 origin refs/tags/$TARGET_TAG
-          git checkout tags/$TARGET_TAG
+          ls -la tools/signapk
           cd ..
 
+          # Clone platform/libcore directly with target tag
           if [ ! -d libcore/.git ]; then
-            git clone --depth 1 --single-branch https://android.googlesource.com/platform/libcore libcore
+            git clone --depth 1 --branch "$TARGET_TAG" https://android.googlesource.com/platform/libcore libcore
           fi
           cd libcore
-          git fetch --depth 1 origin refs/tags/$TARGET_TAG
-          git checkout tags/$TARGET_TAG
           cd ..
 
+          # Verify signapk source dir exists
           ls -la "$AOSP_DIR/build/tools/signapk/"
 
       - name: Copy Build Script & BC Libraries
