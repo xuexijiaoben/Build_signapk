@@ -25,6 +25,10 @@ env:
   BC_BASE_DIR: '${{ github.workspace }}/bc-cache'
   OUTPUT_DIR: '${{ github.workspace }}/artifacts'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-signapk:
     name: Build signapk.jar (${{ matrix.android_branch }})
