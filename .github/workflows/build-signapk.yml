@@ -159,8 +159,7 @@ jobs:
           jar tf "$BC_PKIX" | head -3
 
       # 【核心替换步骤】Clone Minimal AOSP Source (Official Google Source, Fix tag missing)
-      
-      - name: Download signapk + libcore tar (Fix folder missing)
+      - name: Download signapk + libcore tar (Separate rule for build/libcore)
         run: |
           set -eo pipefail
           export GIT_HTTP_TIMEOUT=300
@@ -170,52 +169,48 @@ jobs:
           mkdir -p "$TARGET_ROOT"
           cd "$TARGET_ROOT"
 
-          # 远程查询tag对应commit哈希
+          # 函数：仅用于libcore，查询tag对应commit哈希
           get_tag_commit(){
             local REPO_PATH=$1
             local TAG_NAME=$2
             git ls-remote --tags "https://android.googlesource.com/$REPO_PATH" | grep "refs/tags/$TAG_NAME$" | awk '{print $1}'
           }
 
-          # 处理 platform/build 下 tools/signapk
+          # ====================== 1. 下载 build/tools/signapk（直接tag地址，不用commit） ======================
           if [ ! -d "$TARGET_ROOT/build/tools/signapk" ]; then
             mkdir -p "$TARGET_ROOT/build"
             cd "$TARGET_ROOT/build"
-            COMMIT=$(get_tag_commit platform/build "$TAG")
-            if [ -z "$COMMIT" ]; then
-              echo "ERROR: No commit for tag $TAG"
-              exit 8
-            fi
-            echo "build commit: $COMMIT"
-            # 下载仅signapk目录压缩包
-            wget --timeout=300 -q -O signapk.tar.gz "https://android.googlesource.com/platform/build/+archive/$COMMIT/tools/signapk.tar.gz"
-            # 解压到当前build目录，生成tools/
+            echo "Download signapk archive with tag $TAG"
+            # build仓库专用合法tag地址
+            wget --timeout=300 -O signapk.tar.gz "https://android.googlesource.com/platform/build/+archive/refs/tags/$TAG/tools/signapk.tar.gz"
+            # 打印压缩包内文件，排查空包
+            tar -ztf signapk.tar.gz
             tar -zxf signapk.tar.gz
             rm -f signapk.tar.gz
             cd "$TARGET_ROOT"
+            # 校验解压结果
+            if [ ! -d "$TARGET_ROOT/build/tools/signapk" ]; then
+              echo "FATAL: signapk tar empty, tag url invalid"
+              exit 2
+            fi
           fi
 
-          # 处理 libcore 完整源码
+          # ====================== 2. 下载 libcore（必须commit哈希） ======================
           if [ ! -d "$TARGET_ROOT/libcore" ]; then
             COMMIT=$(get_tag_commit platform/libcore "$TAG")
             if [ -z "$COMMIT" ]; then
-              echo "ERROR: No commit for tag $TAG"
+              echo "ERROR: Cannot fetch commit for libcore tag $TAG"
               exit 8
             fi
             echo "libcore commit: $COMMIT"
-            wget --timeout=300 -q -O libcore.tar.gz "https://android.googlesource.com/platform/libcore/+archive/$COMMIT.tar.gz"
+            wget --timeout=300 -O libcore.tar.gz "https://android.googlesource.com/platform/libcore/+archive/$COMMIT.tar.gz"
             mkdir -p "$TARGET_ROOT/libcore"
             tar -zxf libcore.tar.gz -C "$TARGET_ROOT/libcore"
             rm -f libcore.tar.gz
           fi
 
-          # 校验目录，增加容错判断
-          if [ -d "$TARGET_ROOT/build/tools/signapk" ]; then
-            ls -la "$TARGET_ROOT/build/tools/signapk/"
-          else
-            echo "FATAL: signapk source folder missing after extract"
-            exit 2
-          fi
+          # 最终校验
+          ls -la "$TARGET_ROOT/build/tools/signapk/"
 
       - name: Copy Build Script & BC Libraries
         env:
