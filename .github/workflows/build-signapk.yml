@@ -29,6 +29,10 @@ jobs:
   build-signapk:
     name: Build signapk.jar (${{ matrix.android_branch }})
     runs-on: ubuntu-latest
+    name: Build signapk.jar (${{ matrix.android_branch }})
+    runs-on: ubuntu-latest
+    # 新增：单任务最大运行25分钟，避免apt安装被提前取消
+    timeout-minutes: 25
     strategy:
       matrix:
         android_branch: 
@@ -90,18 +94,43 @@ jobs:
             ${{ runner.os }}-signapk-${{ matrix.android_branch }}
             ${{ runner.os }}-signapk-
 
-      - name: Install Minimal System Dependencies (Removed ncurses5/32bit libs)
+      - name: Install Minimal System Dependencies (Opt speed, only required JDK)
         run: |
-          sudo apt-get update -y
+          # 切换清华镜像加速apt，解决国外源慢超时
+          sudo sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
+          sudo sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
+          sudo apt-get clean
+          sudo apt-get update -y --fix-missing
+          
+          # 仅安装当前job需要的JDK，不重复装双JDK减少耗时
+          JDK_PKG=""
+          if [[ "${{ matrix.java_version }}" == "8" ]]; then
+            JDK_PKG="openjdk-8-jdk-headless"
+          else
+            JDK_PKG="openjdk-11-jdk-headless"
+          fi
+          
           sudo apt-get install -y --no-install-recommends \
-            git-core gnupg flex bison build-essential zip unzip curl \
-            python3 python3-pip openjdk-8-jdk-headless openjdk-11-jdk-headless
+            git-core gnupg flex bison build-essential zip unzip curl python3 python3-pip $JDK_PKG
+          
+          # 清理缓存减小磁盘占用，避免IO拖慢
+          sudo apt-get autoremove -y
+          sudo apt-get clean
 
       - name: Git Global Config
         run: |
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
           git config --global core.autocrlf input
+
+      - name: Install AOSP repo tool
+        run: |
+          # 下载官方repo脚本
+          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o ~/.local/bin/repo
+          chmod a+x ~/.local/bin/repo
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          # 验证repo可用
+          repo --version
 
       - name: Download BouncyCastle
         env:
@@ -128,11 +157,11 @@ jobs:
           cd "$AOSP_DIR"
           if [[ -d ".repo" ]]; then
             echo "Sync cached AOSP minimal modules"
-            repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync build/tools/signapk libcore
+            repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync --retry-fetches=3 build/tools/signapk libcore
           else
             echo "Init & Sync minimal AOSP for signapk only"
             repo init -u https://android.googlesource.com/platform/manifest -b ${{ matrix.android_branch }} ${{ matrix.repo_init_args }}
-            repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync build/tools/signapk libcore
+            repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync --retry-fetches=3 build/tools/signapk libcore
           fi
 
       - name: Copy Build Script & BC Lib
