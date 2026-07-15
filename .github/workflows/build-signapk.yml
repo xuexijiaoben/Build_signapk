@@ -149,36 +149,36 @@ jobs:
           jar tf "$BC_PROV" | head -3
           jar tf "$BC_PKIX" | head -3
 
-      # 【核心替换步骤】移除repo，单独浅克隆build+libcore，彻底解决同步超时/路径报错
-      - name: Clone Minimal AOSP Source (Official Google Source, Fix tag missing)
+      # 【核心替换步骤】Clone Minimal AOSP Source (Official Google Source, Fix tag missing)
+      
+      - name: Download signapk + libcore tar archive (No git clone error)
         run: |
           set -eo pipefail
-          git config --global http.postBuffer 524288000
-          git config --global http.lowSpeedLimit 1024
-          git config --global http.lowSpeedTime 180
-          export GIT_TERMINAL_PROMPT=0
           export GIT_HTTP_TIMEOUT=240
           AOSP_DIR="${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}"
           TARGET_TAG="${{ matrix.android_branch }}"
           mkdir -p "$AOSP_DIR"
           cd "$AOSP_DIR"
 
-          # Clone platform/build directly with target tag
-          if [ ! -d build/.git ]; then
-            git clone --depth 1 --branch "$TARGET_TAG" https://android.googlesource.com/platform/build build
+          # 1. 下载 build/tools/signapk 压缩包
+          if [ ! -d build/tools/signapk ]; then
+            mkdir -p build
+            cd build
+            curl -fsSL "https://android.googlesource.com/platform/build/+archive/refs/tags/$TARGET_TAG/tools/signapk.tar.gz" -o signapk.tar.gz
+            tar -zxf signapk.tar.gz
+            rm -f signapk.tar.gz
+            cd ..
           fi
-          cd build
-          ls -la tools/signapk
-          cd ..
 
-          # Clone platform/libcore directly with target tag
-          if [ ! -d libcore/.git ]; then
-            git clone --depth 1 --branch "$TARGET_TAG" https://android.googlesource.com/platform/libcore libcore
+          # 2. 下载完整libcore源码（编译必需依赖）
+          if [ ! -d libcore ]; then
+            curl -fsSL "https://android.googlesource.com/platform/libcore/+archive/refs/tags/$TARGET_TAG/.tar.gz" -o libcore.tar.gz
+            mkdir libcore
+            tar -zxf libcore.tar.gz -C libcore
+            rm -f libcore.tar.gz
           fi
-          cd libcore
-          cd ..
 
-          # Verify signapk source dir exists
+          # 校验源码目录存在
           ls -la "$AOSP_DIR/build/tools/signapk/"
 
       - name: Copy Build Script & BC Libraries
