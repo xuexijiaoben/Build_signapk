@@ -79,11 +79,6 @@ jobs:
             java -version 2>&1 | grep -q "1.8" || exit 1
           fi
 
-      - name: Network Check Maven
-        run: |
-          set -eo pipefail
-          curl --connect-timeout 10 --retry 3 -I https://repo1.maven.org/maven2/ || (echo "Maven Central unreachable" && exit 1)
-
       - name: Cache AOSP & BC Lib
         uses: actions/cache@v4
         id: cache-signapk
@@ -159,58 +154,51 @@ jobs:
           jar tf "$BC_PKIX" | head -3
 
       # 【核心替换步骤】Clone Minimal AOSP Source (Official Google Source, Fix tag missing)
-      - name: Download signapk + libcore tar (Fix cd path error)
+      - name: Download signapk + libcore tar (Fix folder nesting error)
         run: |
           set -eo pipefail
           export GIT_HTTP_TIMEOUT=300
           AOSP_DIR="${{ env.AOSP_BASE_DIR }}"
-          TAG="${{ matrix.android_branch }}"
-          TARGET_ROOT="$AOSP_DIR/$TAG"
+          TARGET_TAG="${{ matrix.android_branch }}"
+          TARGET_ROOT="$AOSP_DIR/$TARGET_TAG"
           mkdir -p "$TARGET_ROOT"
           cd "$TARGET_ROOT"
 
-          # libcore专用：根据tag获取commit哈希
-          get_tag_commit(){
-            local REPO_PATH=$1
-            local TAG_NAME=$2
-            git ls-remote --tags "https://android.googlesource.com/$REPO_PATH" | grep "refs/tags/$TAG_NAME$" | awk '{print $1}'
-          }
-
-          # 1. 下载 build/tools/signapk（tag直连地址，官方标准格式）
+          # ========== 处理 build / tools/signapk 修复层级 ==========
           if [ ! -d "$TARGET_ROOT/build/tools/signapk" ]; then
             mkdir -p "$TARGET_ROOT/build"
             cd "$TARGET_ROOT/build"
-            echo "Download signapk archive with tag $TAG"
-            wget --timeout=300 -O signapk.tar.gz "https://android.googlesource.com/platform/build/+archive/refs/tags/$TAG/tools/signapk.tar.gz"
-            # 打印包内所有文件，确认源码存在
-            tar -ztf signapk.tar.gz
-            tar -zxf signapk.tar.gz
-            rm -f signapk.tar.gz
-            # 切回根目录再做全局路径校验
+            # 下载官方archive（根目录直接src，无tools/signapk外层）
+            wget --timeout=300 -O signapk.tar.gz "https://android.googlesource.com/platform/build/+archive/refs/tags/$TARGET_TAG/tools/signapk.tar.gz"
+            # 解压到临时目录
+            mkdir tmp_extract
+            tar -zxf signapk.tar.gz -C tmp_extract
+            # 关键：创建tools/signapk，把所有文件移动进去
+            mkdir -p tools/signapk
+            mv tmp_extract/* tools/signapk/
+            rm -rf tmp_extract signapk.tar.gz
             cd "$TARGET_ROOT"
-            # 校验目录
-            if [ ! -d "$TARGET_ROOT/build/tools/signapk" ]; then
-              echo "FATAL: signapk tar empty, tag url invalid"
+            # 校验路径现在存在
+            if [ ! -d "$TARGET_ROOT/build/tools/signapk/src/com/android/signapk" ]; then
+              echo "FATAL: signapk source move failed!"
               exit 2
             fi
-            echo "signapk source dir ready"
+            echo "signapk folder structure fixed"
           fi
 
-          # 2. 下载 libcore（必须使用commit哈希）
+          # ========== 处理 libcore（解压根目录就是源码，无需嵌套修复） ==========
           if [ ! -d "$TARGET_ROOT/libcore" ]; then
-            COMMIT=$(get_tag_commit platform/libcore "$TAG")
-            if [ -z "$COMMIT" ]; then
-              echo "ERROR: Cannot fetch commit for libcore tag $TAG"
-              exit 8
-            fi
-            echo "libcore commit: $COMMIT"
+            # 获取libcore对应commit
+            get_commit(){
+              git ls-remote --tags "https://android.googlesource.com/platform/libcore" | grep "refs/tags/$TARGET_TAG$" | awk '{print $1}'
+            }
+            COMMIT=$(get_commit)
             wget --timeout=300 -O libcore.tar.gz "https://android.googlesource.com/platform/libcore/+archive/$COMMIT.tar.gz"
-            mkdir -p "$TARGET_ROOT/libcore"
-            tar -zxf libcore.tar.gz -C "$TARGET_ROOT/libcore"
+            mkdir libcore
+            tar -zxf libcore.tar.gz -C libcore
             rm -f libcore.tar.gz
           fi
 
-          # 最终打印源码目录
           ls -la "$TARGET_ROOT/build/tools/signapk/"
 
       - name: Copy Build Script & BC Libraries
