@@ -43,7 +43,7 @@ jobs:
     steps:
       - name: Cache BouncyCastle jars
         uses: actions/cache@v4
-        with
+        with:
           path: ${{ env.BC_CACHE }}
           key: bc-${{ matrix.bc_type }}-${{ matrix.bc_ver }}
 
@@ -92,19 +92,19 @@ jobs:
           cp "$BC_DIR"/bc*.jar ./
           # 生成使用文档
           cat > README.md <<EOF
-# SignApk Package Info
-AOSP Tag: $TAG
-BouncyCastle: ${{ matrix.bc_ver }} (${{ matrix.bc_type }})
-## Linux/macOS 签名命令
-java -cp "signapk.jar:bcprov-${{ matrix.bc_type }}-${{ matrix.bc_ver }}.jar:bcpkix-${{ matrix.bc_ver }}.jar" com.android.signapk.SignApk platform.x509.pem platform.pk8 unsigned.apk signed.apk
-## Windows CMD
-java -cp "signapk.jar;bcprov-${{ matrix.bc_type }}-${{ matrix.bc_ver }}.jar;bcpkix-${{ matrix.bc_ver }}.jar" com.android.signapk platform.x509.pem platform.pk8 unsigned.apk signed.apk
-EOF
+          # SignApk Package Info
+          AOSP Tag: $TAG
+          BouncyCastle: ${{ matrix.bc_ver }} (${{ matrix.bc_type }})
+          ## Linux/macOS 签名命令
+          java -cp "signapk.jar:bcprov-${{ matrix.bc_type }}-${{ matrix.bc_ver }}.jar:bcpkix-${{ matrix.bc_ver }}.jar" com.android.signapk.SignApk platform.x509.pem platform.pk8 unsigned.apk signed.apk
+          ## Windows CMD
+          java -cp "signapk.jar;bcprov-${{ matrix.bc_type }}-${{ matrix.bc_ver }}.jar;bcpkix-${{ matrix.bc_ver }}.jar" com.android.signapk platform.x509.pem platform.pk8 unsigned.apk signed.apk
+          EOF
           ls -lh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
-        with
+        with:
           name: signapk-${{ matrix.aosp_tag }}
           path: ${{ env.OUTPUT_ROOT }}/${{ matrix.aosp_tag }}
           retention-days: 30
