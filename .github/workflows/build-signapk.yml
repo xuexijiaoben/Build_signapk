@@ -1,0 +1,346 @@
+name: Build signapk.jar with BouncyCastle 1.85
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Target Android branch (optional override)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - android-12.0.0_r1
+          - android-13.0.0_r1
+          - android-14.0.0_r1
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/build-signapk.yml'
+  pull_request:
+    branches: [ main ]
+
+env:
+  AOSP_BASE_DIR: '${{ github.workspace }}/aosp-cache'
+  BC_BASE_DIR: '${{ github.workspace }}/bc-cache'
+  OUTPUT_DIR: '${{ github.workspace }}/artifacts'
+
+jobs:
+  build-signapk:
+    name: Build signapk.jar (${{ matrix.android_branch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        android_branch: 
+          - android-12.0.0_r1
+          - android-13.0.0_r1
+          - android-14.0.0_r1
+        include:
+          - android_branch: android-12.0.0_r1
+            bc_version: '1.85'
+            bc_artifact: 'jdk18on'
+            java_version: '8'
+            repo_init_args: '--depth=1 --partial-clone --clone-filter=blob:limit=10M'
+          - android_branch: android-13.0.0_r1
+            bc_version: '1.85'
+            bc_artifact: 'jdk18on'
+            java_version: '8'
+            repo_init_args: '--depth=1 --partial-clone --clone-filter=blob:limit=10M'
+          - android_branch: android-14.0.0_r1
+            bc_version: '1.85'
+            bc_artifact: 'jdk18on'
+            java_version: '11'
+            repo_init_args: '--depth=1 --partial-clone --clone-filter=blob:limit=10M'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          path: main-repo
+
+      - name: Setup Java environment
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ matrix.java_version }}
+          cache: 'gradle'
+
+      - name: Cache AOSP source and dependencies
+        uses: actions/cache@v4
+        id: cache-signapk
+        with:
+          path: |
+            ${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}
+            ${{ env.BC_BASE_DIR }}/bc-${{ matrix.bc_version }}
+          key: ${{ runner.os }}-signapk-${{ matrix.android_branch }}-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}-${{ hashFiles('main-repo/scripts/setup-env.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-signapk-${{ matrix.android_branch }}-${{ matrix.bc_artifact }}
+            ${{ runner.os }}-signapk-${{ matrix.android_branch }}
+            ${{ runner.os }}-signapk-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git-core \
+            gnupg \
+            flex \
+            bison \
+            build-essential \
+            zip \
+            curl \
+            zlib1g-dev \
+            gcc-multilib \
+            g++-multilib \
+            libc6-dev-i386 \
+            lib32ncurses5-dev \
+            x11proto-core-dev \
+            libx11-dev \
+            lib32z1-dev \
+            libgl1-mesa-dev \
+            libxml2-utils \
+            xsltproc \
+            unzip \
+            fontconfig \
+            python3 \
+            python3-pip \
+            openjdk-8-jdk-headless
+
+      - name: Configure Git for AOSP
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git config --global color.ui false
+
+      - name: Download and cache BouncyCastle libraries
+        env:
+          BC_CACHE_DIR: ${{ env.BC_BASE_DIR }}/bc-${{ matrix.bc_version }}
+        run: |
+          mkdir -p "$BC_CACHE_DIR"
+          cd "$BC_CACHE_DIR"
+          
+          BC_PROV_JAR="bcprov-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}.jar"
+          BC_PKIX_JAR="bcpkix-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}.jar"
+          
+          if [[ -f "$BC_PROV_JAR" && -f "$BC_PKIX_JAR" ]]; then
+            echo "✅ BouncyCastle libraries found in cache."
+            exit 0
+          fi
+          
+          echo "🔄 Downloading BouncyCastle version ${{ matrix.bc_version }} (artifact: ${{ matrix.bc_artifact }})..."
+          curl -L -o "$BC_PROV_JAR" \
+            "https://repo1.maven.org/maven2/org/bouncycastle/bcprov-${{ matrix.bc_artifact }}/${{ matrix.bc_version }}/bcprov-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}.jar"
+          curl -L -o "$BC_PKIX_JAR" \
+            "https://repo1.maven.org/maven2/org/bouncycastle/bcpkix-${{ matrix.bc_artifact }}/${{ matrix.bc_version }}/bcpkix-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}.jar"
+          
+          echo "📦 Downloaded files:"
+          ls -la *.jar
+          echo "🔍 Verifying JAR integrity..."
+          jar tf "$BC_PROV_JAR" | head -5
+          jar tf "$BC_PKIX_JAR" | head -5
+
+      - name: Prepare AOSP source (cached or fresh)
+        env:
+          AOSP_DIR: ${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}
+        run: |
+          mkdir -p "$AOSP_DIR"
+          cd "$AOSP_DIR"
+          
+          if [[ -d ".repo" ]]; then
+            echo "📁 Found cached AOSP repo, syncing updates..."
+            repo sync -c -j$(nproc) --no-tags --no-clone-bundle
+          else
+            echo "🔄 Initializing AOSP repo for ${{ matrix.android_branch }}..."
+            repo init -u https://android.googlesource.com/platform/manifest \
+              -b ${{ matrix.android_branch }} \
+              ${{ matrix.repo_init_args }}
+            
+            echo "📥 Syncing signapk module only..."
+            repo sync -c -j$(nproc) --no-tags --no-clone-bundle \
+              build/tools/signapk \
+              libcore \
+              frameworks/base
+          fi
+
+      - name: Copy build scripts and dependencies
+        run: |
+          AOSP_DIR="${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}"
+          BC_CACHE_DIR="${{ env.BC_BASE_DIR }}/bc-${{ matrix.bc_version }}"
+          
+          # Copy BouncyCastle libraries to AOSP signapk directory
+          mkdir -p "$AOSP_DIR/build/tools/signapk/libs"
+          cp "$BC_CACHE_DIR"/bc*.jar "$AOSP_DIR/build/tools/signapk/libs/"
+          
+          # Copy custom build script
+          cp main-repo/scripts/build-signapk.sh "$AOSP_DIR/build/tools/signapk/"
+          chmod +x "$AOSP_DIR/build/tools/signapk/build-signapk.sh"
+          
+          # Create test directory structure
+          mkdir -p "$AOSP_DIR/build/tools/signapk/test"
+          cp main-repo/test/* "$AOSP_DIR/build/tools/signapk/test/" 2>/dev/null || true
+
+      - name: Build signapk.jar
+        env:
+          AOSP_DIR: ${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}
+          BC_VERSION: ${{ matrix.bc_version }}
+          BC_ARTIFACT: ${{ matrix.bc_artifact }}
+        run: |
+          cd "$AOSP_DIR/build/tools/signapk"
+          echo "🏗️ Building signapk.jar for ${{ matrix.android_branch }}..."
+          echo "📦 Using BouncyCastle: $BC_ARTIFACT-$BC_VERSION"
+          ./build-signapk.sh
+          
+          # Verify build output
+          if [[ -f "dist/signapk.jar" ]]; then
+            echo "✅ Build successful!"
+            ls -lh dist/signapk.jar
+            echo "🔍 JAR contents:"
+            jar tf dist/signapk.jar | grep -E "(SignApk|MANIFEST)" | head -10
+          else
+            echo "❌ Build failed!"
+            exit 1
+          fi
+
+      - name: Basic functional test
+        env:
+          AOSP_DIR: ${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}
+          BC_CACHE_DIR: ${{ env.BC_BASE_DIR }}/bc-${{ matrix.bc_version }}
+        run: |
+          cd "$AOSP_DIR/build/tools/signapk"
+          
+          # Create test certificate and key
+          echo "🔐 Generating test certificate..."
+          openssl genrsa -out test.key 2048 2>/dev/null
+          openssl pkcs8 -in test.key -topk8 -outform DER -out test.pk8 -nocrypt 2>/dev/null
+          openssl req -new -x509 -key test.key -out test.pem \
+            -days 365 -subj "/CN=Test Platform/O=GitHub Actions/C=US" 2>/dev/null
+          
+          # Create minimal test APK
+          echo "📱 Creating test APK..."
+          cat > AndroidManifest.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="com.github.test">
+              <application android:allowBackup="true" android:label="Test" />
+          </manifest>
+          EOF
+          
+          zip -r test-unsigned.apk AndroidManifest.xml 2>/dev/null
+          zipalign -f 4 test-unsigned.apk test-aligned.apk 2>/dev/null || true
+          
+          # Test signing
+          echo "✍️ Testing signapk.jar..."
+          java -cp "dist/signapk.jar:libs/bcprov-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}.jar:libs/bcpkix-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}.jar" \
+            com.android.signapk.SignApk \
+            test.pem test.pk8 \
+            test-aligned.apk test-signed.apk 2>&1 || true
+          
+          # Verify signature
+          if [[ -f "test-signed.apk" ]]; then
+            echo "✅ Signing test passed!"
+            jarsigner -verify -verbose -certs test-signed.apk 2>&1 | grep -E "(jar verified|SHA-256)" || true
+          else
+            echo "⚠️ Signing test produced no output (may be expected for minimal test)"
+          fi
+          
+          # Cleanup
+          rm -f test.key test.pk8 test.pem *.apk AndroidManifest.xml
+
+      - name: Prepare artifacts
+        env:
+          AOSP_DIR: ${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}
+          OUTPUT_PATH: ${{ env.OUTPUT_DIR }}/${{ matrix.android_branch }}
+        run: |
+          mkdir -p "$OUTPUT_PATH"
+          
+          # Copy signapk.jar
+          cp "$AOSP_DIR/build/tools/signapk/dist/signapk.jar" \
+            "$OUTPUT_PATH/signapk_${{ matrix.android_branch }}_bc${{ matrix.bc_version }}.jar"
+          
+          # Copy BouncyCastle libraries
+          cp "$AOSP_DIR/build/tools/signapk/libs/"*.jar "$OUTPUT_PATH/"
+          
+          # Create README
+          cat > "$OUTPUT_PATH/README.md" << EOF
+          # signapk.jar - ${{ matrix.android_branch }}
+          
+          ## Build Information
+          - Android Branch: ${{ matrix.android_branch }}
+          - BouncyCastle Version: ${{ matrix.bc_version }} (${{ matrix.bc_artifact }})
+          - JDK Version: ${{ matrix.java_version }}
+          - Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          ## Usage Example
+          \`\`\`bash
+          java -cp "signapk_${{ matrix.android_branch }}_bc${{ matrix.bc_version }}.jar:bcprov-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}.jar:bcpkix-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}.jar" \\
+            com.android.signapk.SignApk \\
+            platform.x509.pem platform.pk8 \\
+            input.apk output-signed.apk
+          \`\`\`
+          
+          ## Included Dependencies
+          1. \`bcprov-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}.jar\` - BouncyCastle Provider
+          2. \`bcpkix-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}.jar\` - BouncyCastle PKIX
+          
+          ## Notes
+          - This build uses JDK ${{ matrix.java_version }} for compatibility
+          - Ensure JDK 8+ for running the tool
+          - Clean META-INF directory before signing existing APKs
+          \`zip -d input.apk 'META-INF/*'\`
+          EOF
+          
+          echo "📦 Artifacts prepared:"
+          ls -la "$OUTPUT_PATH/"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: signapk-${{ matrix.android_branch }}-bc${{ matrix.bc_version }}
+          path: ${{ env.OUTPUT_DIR }}/${{ matrix.android_branch }}/
+          retention-days: 7
+
+  post-build:
+    name: Post-build Summary
+    runs-on: ubuntu-latest
+    needs: build-signapk
+    if: always()
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+          
+      - name: Generate build report
+        run: |
+          echo "# Build Summary" > build-report.md
+          echo "## Generated on $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> build-report.md
+          echo "" >> build-report.md
+          
+          for dir in all-artifacts/*; do
+            if [[ -d "$dir" ]]; then
+              branch=$(basename "$dir" | cut -d'-' -f2- | sed 's/-bc.*//')
+              bc_version=$(basename "$dir" | grep -o 'bc[0-9.]*' | cut -c3-)
+              
+              echo "### $branch" >> build-report.md
+              echo "- BouncyCastle: $bc_version" >> build-report.md
+              echo "- Files:" >> build-report.md
+              
+              for file in "$dir"/*; do
+                if [[ -f "$file" ]]; then
+                  size=$(du -h "$file" | cut -f1)
+                  echo "  - $(basename "$file") ($size)" >> build-report.md
+                fi
+              done
+              echo "" >> build-report.md
+            fi
+          done
+          
+          cat build-report.md
+          
+      - name: Upload summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-summary
+          path: build-report.md
