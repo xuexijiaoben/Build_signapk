@@ -188,21 +188,21 @@ jobs:
           cp "${{ env.BC_BASE_DIR }}/bc-${{ matrix.bc_version }}/$BC_PROV" "$OUTPUT_PATH/"
           cp "${{ env.BC_BASE_DIR }}/bc-${{ matrix.bc_version }}/$BC_PKIX" "$OUTPUT_PATH/"
           cat > "$OUTPUT_PATH/README.md" << EOF
-# signapk.jar Build Info
-- AOSP Branch: ${{ matrix.android_branch }}
-- BouncyCastle: ${{ matrix.bc_version }} (${{ matrix.bc_artifact }})
-- Build JDK: ${{ matrix.java_version }}
+          # signapk.jar Build Info
+          - AOSP Branch: ${{ matrix.android_branch }}
+          - BouncyCastle: ${{ matrix.bc_version }} (${{ matrix.bc_artifact }})
+          - Build JDK: ${{ matrix.java_version }}
 
-## Linux/macOS Usage
-\`\`\`bash
-java -cp "signapk_${{ matrix.android_branch }}_bc${{ matrix.bc_version }}.jar:$BC_PROV:$BC_PKIX" \\
-com.android.signapk.SignApk platform.x509.pem platform.pk8 raw.apk signed.apk
-\`\`\`
-## Windows CMD Usage (use ; split classpath)
-\`\`\`cmd
-java -cp "signapk_${{ matrix.android_branch }}_bc${{ matrix.bc_version }}.jar;$BC_PROV;$BC_PKIX" com.android.signapk.SignApk platform.x509.pem platform.pk8 raw.apk signed.apk
-\`\`\`
-EOF
+          ## Linux/macOS Usage
+          \`\`\`bash
+          java -cp "signapk_${{ matrix.android_branch }}_bc${{ matrix.bc_version }}.jar:$BC_PROV:$BC_PKIX" \\
+          com.android.signapk.SignApk platform.x509.pem platform.pk8 raw.apk signed.apk
+          \`\`\`
+          ## Windows CMD Usage (use ; split classpath)
+          \`\`\`cmd
+          java -cp "signapk_${{ matrix.android_branch }}_bc${{ matrix.bc_version }}.jar;$BC_PROV;$BC_PKIX" com.android.signapk.SignApk platform.x509.pem platform.pk8 raw.apk signed.apk
+          \`\`\`
+          EOF
           ls -lh "$OUTPUT_PATH/"
 
       - name: Upload Build Artifact
