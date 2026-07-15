@@ -150,32 +150,34 @@ jobs:
           jar tf "$BC_PKIX" | head -3
 
       # 【核心替换步骤】移除repo，单独浅克隆build+libcore，彻底解决同步超时/路径报错
-      - name: Clone Minimal AOSP Source (build + libcore, no repo)
+      - name: Clone Minimal AOSP Source (Official Google Source, No Queue)
         run: |
           set -eo pipefail
+          git config --global http.postBuffer 524288000
+          git config --global http.lowSpeedLimit 1024
+          git config --global http.lowSpeedTime 180
           export GIT_TERMINAL_PROMPT=0
-          export GIT_HTTP_TIMEOUT=120
+          export GIT_HTTP_TIMEOUT=240
           AOSP_DIR="${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}"
           TARGET_TAG="${{ matrix.android_branch }}"
           mkdir -p "$AOSP_DIR"
           cd "$AOSP_DIR"
 
-          # 处理 platform/build
+          # 原生谷歌地址，无国内限流排队
           if [ ! -d build/.git ]; then
-            git clone --depth 1 https://mirrors.tuna.tsinghua.edu.cn/git/AOSP/platform/build build
+            git clone --depth 1 --single-branch https://android.googlesource.com/platform/build build
           fi
           cd build
-          git fetch origin tag "$TARGET_TAG" --depth 1
-          git checkout tags/"$TARGET_TAG"
+          git fetch --depth 1 origin refs/tags/$TARGET_TAG
+          git checkout tags/$TARGET_TAG
           cd ..
 
-          # 处理 platform/libcore
           if [ ! -d libcore/.git ]; then
-            git clone --depth 1 https://mirrors.tuna.tsinghua.edu.cn/git/AOSP/platform/libcore libcore
+            git clone --depth 1 --single-branch https://android.googlesource.com/platform/libcore libcore
           fi
           cd libcore
-          git fetch origin tag "$TARGET_TAG" --depth 1
-          git checkout tags/"$TARGET_TAG"
+          git fetch --depth 1 origin refs/tags/$TARGET_TAG
+          git checkout tags/$TARGET_TAG
           cd ..
 
           ls -la "$AOSP_DIR/build/tools/signapk/"
