@@ -151,25 +151,33 @@ jobs:
 
       # 【核心替换步骤】移除repo，单独浅克隆build+libcore，彻底解决同步超时/路径报错
       - name: Clone Minimal AOSP Source (build + libcore, no repo)
-        env:
-          AOSP_DIR: ${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}
-          TARGET_BRANCH: ${{ matrix.android_branch }}
         run: |
           set -eo pipefail
+          export GIT_TERMINAL_PROMPT=0
+          export GIT_HTTP_TIMEOUT=120
+          AOSP_DIR="${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}"
+          TARGET_TAG="${{ matrix.android_branch }}"
           mkdir -p "$AOSP_DIR"
           cd "$AOSP_DIR"
-          # 克隆platform/build 内含 tools/signapk 源码，清华镜像浅克隆
+
+          # 处理 platform/build
           if [ ! -d build/.git ]; then
-            git clone --depth 1 --branch "$TARGET_BRANCH" https://mirrors.tuna.tsinghua.edu.cn/git/AOSP/platform/build build
-          else
-            cd build && git fetch origin "$TARGET_BRANCH" --depth 1 && git checkout "$TARGET_BRANCH" && cd ..
+            git clone --depth 1 https://mirrors.tuna.tsinghua.edu.cn/git/AOSP/platform/build build
           fi
-          # 克隆依赖 libcore
+          cd build
+          git fetch origin tag "$TARGET_TAG" --depth 1
+          git checkout tags/"$TARGET_TAG"
+          cd ..
+
+          # 处理 platform/libcore
           if [ ! -d libcore/.git ]; then
-            git clone --depth 1 --branch "$TARGET_BRANCH" https://mirrors.tuna.tsinghua.edu.cn/git/AOSP/platform/libcore libcore
-          else
-            cd libcore && git fetch origin "$TARGET_BRANCH" --depth 1 && git checkout "$TARGET_BRANCH" && cd ..
-          # 校验signapk目录存在
+            git clone --depth 1 https://mirrors.tuna.tsinghua.edu.cn/git/AOSP/platform/libcore libcore
+          fi
+          cd libcore
+          git fetch origin tag "$TARGET_TAG" --depth 1
+          git checkout tags/"$TARGET_TAG"
+          cd ..
+
           ls -la "$AOSP_DIR/build/tools/signapk/"
 
       - name: Copy Build Script & BC Libraries
