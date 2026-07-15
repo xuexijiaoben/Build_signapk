@@ -110,6 +110,7 @@ jobs:
           sudo apt-get update -y --fix-missing
           # 仅安装Java编译必需工具，移除build-essential/flex/bison无用包
           sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y --no-install-recommends git-core gnupg zip unzip curl python3 python3-pip
+          sudo apt-get install -y --no-install-recommends jq
 
       - name: Install target JDK only
         run: |
@@ -155,34 +156,45 @@ jobs:
 
       # 【核心替换步骤】Clone Minimal AOSP Source (Official Google Source, Fix tag missing)
       
-      - name: Download signapk + libcore tar archive (No git clone error)
+      - name: Download signapk + libcore tar (Fix archive url tag invalid)
         run: |
           set -eo pipefail
-          export GIT_HTTP_TIMEOUT=240
+          export GIT_HTTP_TIMEOUT=300
           AOSP_DIR="${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}"
-          TARGET_TAG="${{ matrix.android_branch }}"
+          TAG="${{ matrix.android_branch }}"
           mkdir -p "$AOSP_DIR"
           cd "$AOSP_DIR"
 
-          # 1. 下载 build/tools/signapk 压缩包
+          # 函数：根据仓库名+tag获取commit hash
+          get_commit_hash(){
+            local REPO=$1
+            local TAG=$2
+            # 拉取tag对应的commit信息，提取哈希
+            wget -qO- "https://android.googlesource.com/$REPO/+refs/tags/$TAG?format=json" | sed '1d' | jq -r '.commit'
+          }
+
+          # 1. 处理 build 仓库 signapk 目录
           if [ ! -d build/tools/signapk ]; then
             mkdir -p build
             cd build
-            curl -fsSL "https://android.googlesource.com/platform/build/+archive/refs/tags/$TARGET_TAG/tools/signapk.tar.gz" -o signapk.tar.gz
+            COMMIT=$(get_commit_hash platform/build "$TAG")
+            echo "build repo commit: $COMMIT"
+            wget -q -O signapk.tar.gz "https://android.googlesource.com/platform/build/+archive/$COMMIT/tools/signapk.tar.gz"
             tar -zxf signapk.tar.gz
             rm -f signapk.tar.gz
             cd ..
           fi
 
-          # 2. 下载完整libcore源码（编译必需依赖）
+          # 2. 处理 libcore 完整源码（编译signapk必需依赖）
           if [ ! -d libcore ]; then
-            curl -fsSL "https://android.googlesource.com/platform/libcore/+archive/refs/tags/$TARGET_TAG/.tar.gz" -o libcore.tar.gz
+            COMMIT=$(get_commit_hash platform/libcore "$TAG")
+            echo "libcore repo commit: $COMMIT"
+            wget -q -O libcore.tar.gz "https://android.googlesource.com/platform/libcore/+archive/$COMMIT.tar.gz"
             mkdir libcore
             tar -zxf libcore.tar.gz -C libcore
             rm -f libcore.tar.gz
           fi
 
-          # 校验源码目录存在
           ls -la "$AOSP_DIR/build/tools/signapk/"
 
       - name: Copy Build Script & BC Libraries
