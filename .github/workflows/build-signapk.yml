@@ -29,8 +29,6 @@ jobs:
   build-signapk:
     name: Build signapk.jar (${{ matrix.android_branch }})
     runs-on: ubuntu-latest
-    name: Build signapk.jar (${{ matrix.android_branch }})
-    runs-on: ubuntu-latest
     # 新增：单任务最大运行25分钟，避免apt安装被提前取消
     timeout-minutes: 25
     strategy:
