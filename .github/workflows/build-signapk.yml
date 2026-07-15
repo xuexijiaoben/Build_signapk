@@ -59,12 +59,31 @@ jobs:
         with:
           path: main-repo
 
-      - name: Setup Java environment
+      - name: Setup Java environment (Optimized for signapk)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: ${{ matrix.java_version }}
-          cache: 'gradle'
+          # 移除了 cache 参数，避免无关的 Gradle 缓存扫描
+
+      - name: Verify Java environment
+        run: |
+          echo "Java Home: $JAVA_HOME"
+          java -version
+          javac -version
+          # 确保使用的是指定的 JDK 8 或 11
+          if [[ "${{ matrix.java_version }}" == "8" ]]; then
+            java -version 2>&1 | grep -q "1.8" || (echo "JDK 8 not correctly set" && exit 1)
+          fi
+      - name: Pre-check network and Maven Central
+        run: |
+          # 测试网络连通性
+          curl -s --retry 3 --max-time 10 https://repo1.maven.org/maven2/org/bouncycastle/ > /dev/null
+          if [ $? -ne 0 ]; then
+            echo "❌ Cannot reach Maven Central. Check network configuration."
+            exit 1
+          fi
+
 
       - name: Cache AOSP source and dependencies
         uses: actions/cache@v4
