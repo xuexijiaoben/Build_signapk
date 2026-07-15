@@ -159,7 +159,7 @@ jobs:
           jar tf "$BC_PKIX" | head -3
 
       # 【核心替换步骤】Clone Minimal AOSP Source (Official Google Source, Fix tag missing)
-      - name: Download signapk + libcore tar (Separate rule for build/libcore)
+      - name: Download signapk + libcore tar (Fix cd path error)
         run: |
           set -eo pipefail
           export GIT_HTTP_TIMEOUT=300
@@ -169,33 +169,34 @@ jobs:
           mkdir -p "$TARGET_ROOT"
           cd "$TARGET_ROOT"
 
-          # 函数：仅用于libcore，查询tag对应commit哈希
+          # libcore专用：根据tag获取commit哈希
           get_tag_commit(){
             local REPO_PATH=$1
             local TAG_NAME=$2
             git ls-remote --tags "https://android.googlesource.com/$REPO_PATH" | grep "refs/tags/$TAG_NAME$" | awk '{print $1}'
           }
 
-          # ====================== 1. 下载 build/tools/signapk（直接tag地址，不用commit） ======================
+          # 1. 下载 build/tools/signapk（tag直连地址，官方标准格式）
           if [ ! -d "$TARGET_ROOT/build/tools/signapk" ]; then
             mkdir -p "$TARGET_ROOT/build"
             cd "$TARGET_ROOT/build"
             echo "Download signapk archive with tag $TAG"
-            # build仓库专用合法tag地址
             wget --timeout=300 -O signapk.tar.gz "https://android.googlesource.com/platform/build/+archive/refs/tags/$TAG/tools/signapk.tar.gz"
-            # 打印压缩包内文件，排查空包
+            # 打印包内所有文件，确认源码存在
             tar -ztf signapk.tar.gz
             tar -zxf signapk.tar.gz
             rm -f signapk.tar.gz
+            # 切回根目录再做全局路径校验
             cd "$TARGET_ROOT"
-            # 校验解压结果
+            # 校验目录
             if [ ! -d "$TARGET_ROOT/build/tools/signapk" ]; then
               echo "FATAL: signapk tar empty, tag url invalid"
               exit 2
             fi
+            echo "signapk source dir ready"
           fi
 
-          # ====================== 2. 下载 libcore（必须commit哈希） ======================
+          # 2. 下载 libcore（必须使用commit哈希）
           if [ ! -d "$TARGET_ROOT/libcore" ]; then
             COMMIT=$(get_tag_commit platform/libcore "$TAG")
             if [ -z "$COMMIT" ]; then
@@ -209,7 +210,7 @@ jobs:
             rm -f libcore.tar.gz
           fi
 
-          # 最终校验
+          # 最终打印源码目录
           ls -la "$TARGET_ROOT/build/tools/signapk/"
 
       - name: Copy Build Script & BC Libraries
