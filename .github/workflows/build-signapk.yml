@@ -100,23 +100,25 @@ jobs:
       - name: Install basic lightweight apt tools
         run: |
           set -eo pipefail
-          echo "Install minimal basic tools only"
           export DEBIAN_FRONTEND=noninteractive
           export APT_LISTCHANGES_FRONTEND=none
-          # 替换清华源
+          # 仅替换源，不装重型编译包
           sudo sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
           sudo sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
           sudo apt-get clean
           sudo apt-get update -y --fix-missing
-          # 仅安装Java编译必需工具，移除build-essential/flex/bison无用包
           sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y --no-install-recommends git-core gnupg zip unzip curl python3 python3-pip
-          sudo apt-get install -y --no-install-recommends jq
+          # 提前禁用java证书自动更新，避免后续jdk触发扫描
+          sudo rm -f /etc/ca-certificates/update.d/jks-keystore
 
       - name: Install target JDK only
         run: |
           set -eo pipefail
           export DEBIAN_FRONTEND=noninteractive
           export APT_LISTCHANGES_FRONTEND=none
+          # 彻底禁用java证书自动生成脚本，防止海量证书扫描卡死
+          sudo rm -f /etc/ca-certificates/update.d/jks-keystore
+          sudo mv /usr/bin/update-ca-certificates /usr/bin/update-ca-certificates.bak || true
           if [[ "${{ matrix.java_version }}" == "8" ]]; then
             echo "Install openjdk-8-jdk-headless"
             sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y --no-install-recommends openjdk-8-jdk-headless
@@ -124,6 +126,8 @@ jobs:
             echo "Install openjdk-11-jdk-headless"
             sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y --no-install-recommends openjdk-11-jdk-headless
           fi
+          # 安装完手动跳过证书更新
+          sudo update-ca-certificates --fresh >/dev/null 2>&1 || true
           echo "JDK install complete"
 
       - name: Git Global Config
@@ -156,46 +160,54 @@ jobs:
 
       # 【核心替换步骤】Clone Minimal AOSP Source (Official Google Source, Fix tag missing)
       
-      - name: Download signapk + libcore tar (Fix archive url tag invalid)
+      - name: Download signapk + libcore tar (Fix commit null error)
         run: |
           set -eo pipefail
           export GIT_HTTP_TIMEOUT=300
-          AOSP_DIR="${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}"
+          AOSP_DIR="${{ env.AOSP_BASE_DIR }}"
           TAG="${{ matrix.android_branch }}"
-          mkdir -p "$AOSP_DIR"
-          cd "$AOSP_DIR"
+          TARGET_ROOT="$AOSP_DIR/$TAG"
+          mkdir -p "$TARGET_ROOT"
+          cd "$TARGET_ROOT"
 
-          # 函数：根据仓库名+tag获取commit hash
-          get_commit_hash(){
-            local REPO=$1
-            local TAG=$2
-            # 拉取tag对应的commit信息，提取哈希
-            wget -qO- "https://android.googlesource.com/$REPO/+refs/tags/$TAG?format=json" | sed '1d' | jq -r '.commit'
+          # 远程查询tag对应commit hash，不走json接口，不会返回null
+          get_tag_commit(){
+            local REPO_PATH=$1
+            local TAG_NAME=$2
+            git ls-remote --tags "https://android.googlesource.com/$REPO_PATH" | grep "refs/tags/$TAG_NAME$" | awk '{print $1}'
           }
 
-          # 1. 处理 build 仓库 signapk 目录
+          # ========== 处理platform/build /tools/signapk ==========
           if [ ! -d build/tools/signapk ]; then
             mkdir -p build
             cd build
-            COMMIT=$(get_commit_hash platform/build "$TAG")
-            echo "build repo commit: $COMMIT"
-            wget -q -O signapk.tar.gz "https://android.googlesource.com/platform/build/+archive/$COMMIT/tools/signapk.tar.gz"
+            COMMIT=$(get_tag_commit platform/build "$TAG")
+            if [ -z "$COMMIT" ]; then
+              echo "ERROR: 无法获取 $TAG 对应的commit哈希"
+              exit 8
+            fi
+            echo "build commit: $COMMIT"
+            wget --timeout=300 -q -O signapk.tar.gz "https://android.googlesource.com/platform/build/+archive/$COMMIT/tools/signapk.tar.gz"
             tar -zxf signapk.tar.gz
             rm -f signapk.tar.gz
             cd ..
           fi
 
-          # 2. 处理 libcore 完整源码（编译signapk必需依赖）
+          # ========== 处理platform/libcore 完整源码 ==========
           if [ ! -d libcore ]; then
-            COMMIT=$(get_commit_hash platform/libcore "$TAG")
-            echo "libcore repo commit: $COMMIT"
-            wget -q -O libcore.tar.gz "https://android.googlesource.com/platform/libcore/+archive/$COMMIT.tar.gz"
+            COMMIT=$(get_tag_commit platform/libcore "$TAG")
+            if [ -z "$COMMIT" ]; then
+              echo "ERROR: 无法获取 $TAG 对应的commit哈希"
+              exit 8
+            fi
+            echo "libcore commit: $COMMIT"
+            wget --timeout=300 -q -O libcore.tar.gz "https://android.googlesource.com/platform/libcore/+archive/$COMMIT.tar.gz"
             mkdir libcore
             tar -zxf libcore.tar.gz -C libcore
             rm -f libcore.tar.gz
           fi
 
-          ls -la "$AOSP_DIR/build/tools/signapk/"
+          ls -la "$TARGET_ROOT/build/tools/signapk/"
 
       - name: Copy Build Script & BC Libraries
         env:
