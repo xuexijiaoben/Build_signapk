@@ -93,33 +93,33 @@ jobs:
             ${{ runner.os }}-signapk-${{ matrix.android_branch }}
             ${{ runner.os }}-signapk-
 
-      - name: Install basic lightweight apt tools (No service trigger)
-        run: >
+      - name: Install basic lightweight apt tools
+        run: |
           set -eo pipefail
           echo "Install minimal basic tools only"
           export DEBIAN_FRONTEND=noninteractive
           export APT_LISTCHANGES_FRONTEND=none
+          # 替换清华源
           sudo sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
           sudo sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
           sudo apt-get clean
           sudo apt-get update -y --fix-missing
-          sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
-          install -y --no-install-recommends git-core gnupg zip unzip curl python3 python3-pip
+          # 仅安装Java编译必需工具，移除build-essential/flex/bison无用包
+          sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y --no-install-recommends git-core gnupg zip unzip curl python3 python3-pip
 
       - name: Install target JDK only
-        run: >
+        run: |
           set -eo pipefail
           export DEBIAN_FRONTEND=noninteractive
           export APT_LISTCHANGES_FRONTEND=none
           if [[ "${{ matrix.java_version }}" == "8" ]]; then
             echo "Install openjdk-8-jdk-headless"
-            sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
-            install -y --no-install-recommends openjdk-8-jdk-headless
+            sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y --no-install-recommends openjdk-8-jdk-headless
           else
             echo "Install openjdk-11-jdk-headless"
-            sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
-            install -y --no-install-recommends openjdk-11-jdk-headless
-          echo "JDK install complete""
+            sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y --no-install-recommends openjdk-11-jdk-headless
+          fi
+          echo "JDK install complete"
 
       - name: Git Global Config
         run: |
