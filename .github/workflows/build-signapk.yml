@@ -29,8 +29,7 @@ jobs:
   build-signapk:
     name: Build signapk.jar (${{ matrix.android_branch }})
     runs-on: ubuntu-latest
-    # 新增：单任务最大运行25分钟，避免apt安装被提前取消
-    timeout-minutes: 25
+    timeout-minutes: 40
     strategy:
       matrix:
         android_branch: 
@@ -42,17 +41,14 @@ jobs:
             bc_version: '1.85'
             bc_artifact: 'jdk18on'
             java_version: '8'
-            repo_init_args: '--depth=1 --partial-clone --clone-filter=blob:limit=10M'
           - android_branch: android-13.0.0_r1
             bc_version: '1.85'
             bc_artifact: 'jdk18on'
             java_version: '8'
-            repo_init_args: '--depth=1 --partial-clone --clone-filter=blob:limit=10M'
           - android_branch: android-14.0.0_r1
             bc_version: '1.85'
             bc_artifact: 'jdk18on'
             java_version: '11'
-            repo_init_args: '--depth=1 --partial-clone --clone-filter=blob:limit=10M'
     
     steps:
       - name: Checkout repository
@@ -68,6 +64,7 @@ jobs:
 
       - name: Verify Java Env
         run: |
+          set -eo pipefail
           echo "JAVA_HOME=$JAVA_HOME"
           java -version
           javac -version
@@ -77,6 +74,7 @@ jobs:
 
       - name: Network Check Maven
         run: |
+          set -eo pipefail
           curl --connect-timeout 10 --retry 3 -I https://repo1.maven.org/maven2/ || (echo "Maven Central unreachable" && exit 1)
 
       - name: Cache AOSP & BC Lib
@@ -86,7 +84,7 @@ jobs:
           path: |
             ${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}
             ${{ env.BC_BASE_DIR }}/bc-${{ matrix.bc_version }}
-          key: ${{ runner.os }}-signapk-${{ matrix.android_branch }}-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}-${{ hashFiles('main-repo/scripts/setup-env.sh','main-repo/scripts/build-signapk.sh') }}
+          key: ${{ runner.os }}-signapk-${{ matrix.android_branch }}-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}-${{ hashFiles('main-repo/scripts/build-signapk.sh') }}
           restore-keys: |
             ${{ runner.os }}-signapk-${{ matrix.android_branch }}-${{ matrix.bc_artifact }}
             ${{ runner.os }}-signapk-${{ matrix.android_branch }}
@@ -96,50 +94,36 @@ jobs:
         run: |
           set -eo pipefail
           echo "Start apt source replace & install"
-          # 切换清华apt源
+          # 切换清华apt源加速
           sudo sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
           sudo sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
           sudo apt-get clean
           sudo apt-get update -y --fix-missing
-          # 非交互模式，屏蔽服务自动重启
+          # 非交互模式，屏蔽系统自动重启服务
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
               install -y --no-install-recommends git-core gnupg flex bison build-essential zip unzip curl python3 python3-pip
-          # 单独安装对应版本JDK
+          # 按需单独安装JDK，避免双JDK占用资源
           if [[ "${{ matrix.java_version }}" == "8" ]]; then
             echo "Install JDK8"
             sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y --no-install-recommends openjdk-8-jdk-headless
           else
             echo "Install JDK11"
             sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y --no-install-recommends openjdk-11-jdk-headless
-          fi
           echo "apt install finished successfully"
 
       - name: Git Global Config
         run: |
+          set -eo pipefail
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
           git config --global core.autocrlf input
 
-      - name: Install AOSP repo tool (Fix mirror 404)
-        run: |
-          set -eo pipefail
-          echo "Start download repo launcher script"
-          mkdir -p ~/.local/bin
-          # 双地址容错，谷歌源失败自动切清华镜像
-          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o ~/.local/bin/repo || \
-          curl -fsSL https://mirrors.tuna.tsinghua.edu.cn/git/git-repo/repo -o ~/.local/bin/repo
-          chmod a+x ~/.local/bin/repo
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          repo --version
-          echo "repo install done"
-        env:
-          REPO_URL: https://mirrors.tuna.tsinghua.edu.cn/git/git-repo
-
-      - name: Download BouncyCastle
+      - name: Download BouncyCastle Dependencies
         env:
           BC_CACHE_DIR: ${{ env.BC_BASE_DIR }}/bc-${{ matrix.bc_version }}
         run: |
+          set -eo pipefail
           mkdir -p "$BC_CACHE_DIR"
           cd "$BC_CACHE_DIR"
           BC_PROV=bcprov-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}.jar
@@ -148,97 +132,112 @@ jobs:
             echo "BC lib cached, skip download"
             exit 0
           fi
-          curl -L -o "$BC_PROV" "https://repo1.maven.org/maven2/org/bouncycastle/bcprov-${{ matrix.bc_artifact }}/${{ matrix.bc_version }}/$BC_PROV"
-          curl -L -o "$BC_PKIX" "https://repo1.maven.org/maven2/org/bouncycastle/bcpkix-${{ matrix.bc_artifact }}/${{ matrix.bc_version }}/$BC_PKIX"
+          # 双镜像兜底下载
+          curl -L -o "$BC_PROV" "https://repo1.maven.org/maven2/org/bouncycastle/bcprov-${{ matrix.bc_artifact }}/${{ matrix.bc_version }}/$BC_PROV" || \
+          curl -L -o "$BC_PROV" "https://maven.aliyun.com/repository/public/org/bouncycastle/bcprov-${{ matrix.bc_artifact }}/${{ matrix.bc_version }}/$BC_PROV"
+          curl -L -o "$BC_PKIX" "https://repo1.maven.org/maven2/org/bouncycastle/bcpkix-${{ matrix.bc_artifact }}/${{ matrix.bc_version }}/$BC_PKIX" || \
+          curl -L -o "$BC_PKIX" "https://maven.aliyun.com/repository/public/org/bouncycastle/bcpkix-${{ matrix.bc_artifact }}/${{ matrix.bc_version }}/$BC_PKIX"
           jar tf "$BC_PROV" | head -3
           jar tf "$BC_PKIX" | head -3
 
-      - name: Prepare AOSP Minimal Source
+      # 【核心替换步骤】移除repo，单独浅克隆build+libcore，彻底解决同步超时/路径报错
+      - name: Clone Minimal AOSP Source (build + libcore, no repo)
         env:
           AOSP_DIR: ${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}
+          TARGET_BRANCH: ${{ matrix.android_branch }}
         run: |
+          set -eo pipefail
           mkdir -p "$AOSP_DIR"
           cd "$AOSP_DIR"
-          # 使用清华AOSP镜像，规避google源访问失败
-          export REPO_URL=https://mirrors.tuna.tsinghua.edu.cn/git/git-repo
-          if [[ -d ".repo" ]]; then
-            echo "Sync cached AOSP minimal modules"
-            repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync --retry-fetches=3 build/tools/signapk libcore
+          # 克隆platform/build 内含 tools/signapk 源码，清华镜像浅克隆
+          if [ ! -d build/.git ]; then
+            git clone --depth 1 --branch "$TARGET_BRANCH" https://mirrors.tuna.tsinghua.edu.cn/git/AOSP/platform/build build
           else
-            echo "Init & Sync minimal AOSP for signapk only"
-            repo init -u https://mirrors.tuna.tsinghua.edu.cn/git/AOSP/platform/manifest \
-              -b ${{ matrix.android_branch }} ${{ matrix.repo_init_args }}
-            repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync --retry-fetches=3 build/tools/signapk libcore
+            cd build && git fetch origin "$TARGET_BRANCH" --depth 1 && git checkout "$TARGET_BRANCH" && cd ..
           fi
+          # 克隆依赖 libcore
+          if [ ! -d libcore/.git ]; then
+            git clone --depth 1 --branch "$TARGET_BRANCH" https://mirrors.tuna.tsinghua.edu.cn/git/AOSP/platform/libcore libcore
+          else
+            cd libcore && git fetch origin "$TARGET_BRANCH" --depth 1 && git checkout "$TARGET_BRANCH" && cd ..
+          # 校验signapk目录存在
+          ls -la "$AOSP_DIR/build/tools/signapk/"
 
-      - name: Copy Build Script & BC Lib
+      - name: Copy Build Script & BC Libraries
+        env:
+          AOSP_DIR: ${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}
+          BC_CACHE_DIR: ${{ env.BC_BASE_DIR }}/bc-${{ matrix.bc_version }}
         run: |
-          AOSP_DIR=${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}
-          BC_CACHE=${{ env.BC_BASE_DIR }}/bc-${{ matrix.bc_version }}
-          mkdir -p "$AOSP_DIR/build/tools/signapk/libs"
-          cp "$BC_CACHE"/bc*.jar "$AOSP_DIR/build/tools/signapk/libs/"
-          cp main-repo/scripts/build-signapk.sh "$AOSP_DIR/build/tools/signapk/"
-          chmod +x "$AOSP_DIR/build/tools/signapk/build-signapk.sh"
-          cp -r main-repo/test "$AOSP_DIR/build/tools/signapk/" 2>/dev/null || true
+          set -eo pipefail
+          SIGNAPK_PATH="$AOSP_DIR/build/tools/signapk"
+          mkdir -p "$SIGNAPK_PATH/libs"
+          cp "$BC_CACHE_DIR"/bc*.jar "$SIGNAPK_PATH/libs/"
+          cp main-repo/scripts/build-signapk.sh "$SIGNAPK_PATH/"
+          chmod +x "$SIGNAPK_PATH/build-signapk.sh"
+          cp -r main-repo/test "$SIGNAPK_PATH/" 2>/dev/null || true
 
-      - name: Build signapk.jar
+      - name: Build sign.jar
         env:
           AOSP_DIR: ${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}
         run: |
+          set -eo pipefail
           cd "$AOSP_DIR/build/tools/signapk"
           ./build-signapk.sh
           test -f dist/signapk.jar || exit 1
           ls -lh dist/signapk.jar
 
-      - name: Lightweight Sign Test (No zipalign dependency)
+      - name: Lightweight Sign Functional Test
         env:
           AOSP_DIR: ${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}
           BC_CACHE_DIR: ${{ env.BC_BASE_DIR }}/bc-${{ matrix.bc_version }}
         run: |
+          set -eo pipefail
           cd "$AOSP_DIR/build/tools/signapk"
-          # Generate test platform key
+          # 生成测试平台密钥
           openssl genrsa -out test.key 2048
           openssl pkcs8 -in test.key -topk8 -outform DER -out test.pk8 -nocrypt
           openssl req -new -x509 -key test.key -out test.pem -days 9999 -subj "/C=US/ST=California/L=Mountain View/O=Android/OU=Android/CN=Android/emailAddress=android@android.com"
-          # Minimal unsigned zip as dummy apk
-          echo '<?xml version="1.0"?><manifest package="com.test"/>' > AndroidManifest.xml
+          # 生成极简测试包
+          echo '<?xml version="1.0"?><manifest package="com.test" />' > AndroidManifest.xml
           zip test-unsigned.apk AndroidManifest.xml
-          # Sign
+          # 执行签名测试
           BC_PROV=libs/bcprov-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}.jar
           BC_PKIX=libs/bcpkix-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}.jar
           java -cp "dist/signapk.jar:$BC_PROV:$BC_PKIX" com.android.signapk.SignApk test.pem test.pk8 test-unsigned.apk test-signed.apk
-          # Verify jar signature
+          # 校验签名合法性
           jarsigner -verify test-signed.apk
-          # Clean
+          # 清理临时文件
           rm -f test.key test.pk8 test.pem *.apk AndroidManifest.xml
 
-      - name: Package Artifacts
+      - name: Package Build Artifacts
         env:
           AOSP_DIR: ${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}
           OUTPUT_PATH: ${{ env.OUTPUT_DIR }}/${{ matrix.android_branch }}
         run: |
+          set -eo pipefail
           mkdir -p "$OUTPUT_PATH"
           BC_PROV=bcprov-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}.jar
           BC_PKIX=bcpkix-${{ matrix.bc_artifact }}-${{ matrix.bc_version }}.jar
           cp "$AOSP_DIR/build/tools/signapk/dist/signapk.jar" "$OUTPUT_PATH/signapk_${{ matrix.android_branch }}_bc${{ matrix.bc_version }}.jar"
           cp "${{ env.BC_BASE_DIR }}/bc-${{ matrix.bc_version }}/$BC_PROV" "$OUTPUT_PATH/"
           cp "${{ env.BC_BASE_DIR }}/bc-${{ matrix.bc_version }}/$BC_PKIX" "$OUTPUT_PATH/"
+          # 生成使用说明文档
           cat > "$OUTPUT_PATH/README.md" << EOF
-          # signapk.jar Build Info
-          - AOSP Branch: ${{ matrix.android_branch }}
-          - BouncyCastle: ${{ matrix.bc_version }} (${{ matrix.bc_artifact }})
-          - Build JDK: ${{ matrix.java_version }}
+# signapk.jar Build Info
+- AOSP Branch: ${{ matrix.android_branch }}
+- BouncyCastle: ${{ matrix.bc_version }} (${{ matrix.bc_artifact }})
+- Build JDK: ${{ matrix.java_version }}
 
-          ## Linux/macOS Usage
-          \`\`\`bash
-          java -cp "signapk_${{ matrix.android_branch }}_bc${{ matrix.bc_version }}.jar:$BC_PROV:$BC_PKIX" \\
-          com.android.signapk.SignApk platform.x509.pem platform.pk8 raw.apk signed.apk
-          \`\`\`
-          ## Windows CMD Usage (use ; split classpath)
-          \`\`\`cmd
-          java -cp "signapk_${{ matrix.android_branch }}_bc${{ matrix.bc_version }}.jar;$BC_PROV;$BC_PKIX" com.android.signapk.SignApk platform.x509.pem platform.pk8 raw.apk signed.apk
-          \`\`\`
-          EOF
+## Linux / macOS 签名命令
+\`\`\`bash
+java -cp "signapk_${{ matrix.android_branch }}_bc${{ matrix.bc_version }}.jar:$BC_PROV:$BC_PKIX" \\
+com.android.signapk platform.x509.pem platform.pk8 raw.apk signed.apk
+\`\`\`
+## Windows CMD 签名命令（使用;分隔依赖）
+\`\`\`cmd
+java -cp "signapk_${{ matrix.android_branch }}_bc${{ matrix.bc_version }}.jar;$BC_PROV;$BC_PKIX" com.android.signapk platform.x509.pem platform.pk8 raw.apk signed.apk
+\`\`\`
+EOF
           ls -lh "$OUTPUT_PATH/"
 
       - name: Upload Build Artifact
@@ -258,16 +257,18 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: all-artifacts
-      - name: Generate Report
+      - name: Generate Build Report
         run: |
+          set -eo pipefail
           echo "# SignApk Build Summary $(date -u)" > build-report.md
           for dir in all-artifacts/*; do
-            [ -d "$dir" ] || continue
-            branch=$(basename "$dir" | sed -E 's/signapk-(.*)-bc[0-9.]+/\1/')
-            bcver=$(basename "$dir" | grep -o 'bc[0-9.]*')
-            echo "## $branch ($bcver)" >> build-report.md
-            ls -lh "$dir" | awk '{print "- " $9 " (" $5 ")"}' >> build-report.md
-            echo "" >> build-report.md
+            if [ -d "$dir" ]; then
+              branch=$(basename "$dir" | sed -E 's/signapk-(.*)-bc[0-9.]+/\1/')
+              bcver=$(basename "$dir" | grep -o 'bc[0-9.]*')
+              echo "### $branch ($bcver)" >> build-report.md
+              ls -lh "$dir" | awk '{print "- " $9 " (" $5 ")"}' >> build-report.md
+              echo "" >> build-report.md
+            fi
           done
           cat build-report.md
       - name: Upload Summary
@@ -275,4 +276,3 @@ jobs:
         with:
           name: build-summary-report
           path: build-report.md
-
