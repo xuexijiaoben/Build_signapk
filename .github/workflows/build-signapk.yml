@@ -217,30 +217,18 @@ jobs:
           set -eo pipefail
           SIGNAPK_PATH="$AOSP_DIR/build/tools/signapk"
           mkdir -p "$SIGNAPK_PATH/libs"
+          # 复制BC依赖包
           cp "$BC_CACHE_DIR"/bc*.jar "$SIGNAPK_PATH/libs/"
+          # 复制本地写好的完整编译脚本 + 赋予执行权限
           cp main-repo/scripts/build-signapk.sh "$SIGNAPK_PATH/"
           chmod +x "$SIGNAPK_PATH/build-signapk.sh"
+          # 测试目录（可选）
           cp -r main-repo/test "$SIGNAPK_PATH/" 2>/dev/null || true
-          # 直接覆写编译脚本，彻底解决apksig源码路径缺失
-          cat > "$SIGNAPK_PATH/build-signapk.sh" << 'EOF'
-          #!/bin/bash
-          set -e
-          SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-          find "$SCRIPT_DIR/src" "$SCRIPT_DIR/../../apksig/src" -type f -name "*.java" > sources.txt
-          CP=""
-          for jar in "$SCRIPT_DIR/libs/"*.jar; do
-            CP="$CP:$jar"
-          done
-          mkdir -p bin
-          javac -d bin -cp "$CP" @sources.txt
-          mkdir -p dist
-          jar cfe dist/signapk.jar com.android.signapk.SignApk -C bin .
-          rm -rf bin sources.txt
-          EOF
-          # 删除高版本BC不兼容导入
+
+          # 保留：删除高版本BC、conscrypt不兼容导入（必须保留，否则编译报错）
           sed -i '/import org.bouncycastle.asn1.DEROutputStream;/d' "$SIGNAPK_PATH/src/com/android/signapk/SignApk.java"
           sed -i '/import org.bouncycastle.asn1.cms;/d' "$SIGNAPK_PATH/src/com/android/signapk/SignApk.java"
-          sed -i '/import org.conscrypt/d' "$SIGNAPK_PATH/src/com/android/signapk/SignApk.java"
+          sed -i '/import org.conscrypt/d' "$SIGNAPK_PATH/src/com/android/signapk.java"
         if: env.SKIP_JOB != 'true'
       - name: Build sign.jar
         env:
