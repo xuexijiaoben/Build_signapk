@@ -18,11 +18,11 @@ rm -rf "$DIST"
 mkdir -p "$CLS"
 
 # 路径检查
-[[ ! -d "$SRC_SIGN" ]] && echo "ERROR: Missing signapk src directory" && exit 1
-[[ ! -d "$SRC_APK" ]] && echo "ERROR: Missing apksig src directory" && exit 1
-[[ ! -d "$LIB" ]] && echo "ERROR: Missing BC libs directory" && exit 1
+[[ ! -d "$SRC_SIGN" ]] && echo "ERROR: Missing signapk src" && exit 1
+[[ ! -d "$SRC_APK" ]] && echo "ERROR: Missing apksig src" && exit 1
+[[ ! -d "$LIB" ]] && echo "ERROR: Missing BC libs" && exit 1
 
-# 检查 BouncyCastle
+# BC jars
 BC_PROV=$(ls "$LIB"/bcprov-*.jar 2>/dev/null | head -1)
 BC_PKIX=$(ls "$LIB"/bcpkix-*.jar 2>/dev/null | head -1)
 [[ -z "$BC_PROV" || -z "$BC_PKIX" ]] && echo "ERROR: Missing BC jars" && exit 1
@@ -31,24 +31,26 @@ CP="${BC_PROV}:${BC_PKIX}"
 echo "BC Provider: $(basename $BC_PROV)"
 echo "BC PKIX: $(basename $BC_PKIX)"
 
-# 调试源码
-echo "=== Source check ==="
-find "$SRC_SIGN" -name "*.java" | head -5
-find "$SRC_APK" -name "*.java" | head -5
+# 仅编译必要文件（避免 apksig 中多余的 apksigner 工具类导致编译失败）
+echo "=== Collecting source files ==="
+find "$SRC_SIGN" -name "*.java" > sources.txt
+# 只添加 apksig 中核心签名相关包（避免编译爆炸）
+find "$SRC_APK" \
+  -path "*/com/android/apksig/*" \
+  \( -name "*.java" ! -path "*/test/*" ! -path "*/apksigner/*" \) >> sources.txt || true
 
-# 编译
-find "$SRC_SIGN" "$SRC_APK" -name "*.java" > sources.txt
+echo "Total Java files to compile: $(wc -l < sources.txt)"
+
 javac -encoding UTF-8 -cp "$CP" -d "$CLS" @sources.txt
 rm -f sources.txt
 
-# 创建 Manifest
+# Manifest
 cat > "$DIST/MANIFEST.MF" <<'MF'
 Manifest-Version: 1.0
 Main-Class: com.android.signapk
 MF
 
-# 打包 JAR
 jar cfm "$DIST/signapk.jar" "$DIST/MANIFEST.MF" -C "$CLS" .
 
-echo "=== Build complete ==="
+echo "=== Build completed successfully ==="
 ls -lh "$DIST/signapk.jar"
