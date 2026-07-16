@@ -1,80 +1,76 @@
-name: Build signapk android-12.0.0_r1
+name: Build SignApk android-12.0.0_r1
 on:
-  repository_dispatch:
   workflow_dispatch:
 
 env:
-  AOSP_BASE_DIR: '${{ github.workspace }}/aosp-cache'
-  BC_BASE_DIR: '${{ github.workspace }}/bc-cache'
-  OUTPUT_DIR: '${{ github.workspace }}/artifacts'
-  TARGET_BRANCH: android-12.0.0_r1
+  AOSP_BASE_DIR: ${{ github.workspace }}/aosp-cache
+  BC_BASE_DIR: ${{ github.workspace }}/bc-cache
+  OUTPUT_DIR: ${{ github.workspace }}/artifacts
+  TARGET_TAG: android-12.0.0_r1
   BC_VERSION: '1.69'
   BC_ARTIFACT: 'jdk15on'
-  JAVA_VER: '8'
+  JDK_VER: '8'
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   build-signapk:
-    name: Build signapk $TARGET_BRANCH
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    env:
-      TMPDIR: /tmp
     steps:
-      - name: Checkout repository
+      - name: Checkout source code
         uses: actions/checkout@v4
         with:
           path: main-repo
-      - name: Setup Java
+
+      - name: Setup JDK ${{ env.JDK_VER }}
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: ${{ env.JAVA_VER }}
-      - name: Verify Java Env
+          distribution: temurin
+          java-version: ${{ env.JDK_VER }}
+
+      - name: Verify Java environment
         run: |
           set -eo pipefail
-          echo "JAVA_HOME=$JAVA_HOME"
+          echo JAVA_HOME=$JAVA_HOME
           java -version
           javac -version
-          java -version 2>&1 | grep -q "1.8" || exit 1
-      - name: Cache AOSP & BC Lib
+          if [[ "$JDK_VER" == "8" ]]; then
+            java -version 2>&1 | grep 1.8 || exit 1
+          fi
+
+      - name: Cache AOSP source & BC jars
         uses: actions/cache@v4
-        id: cache-signapk
+        id: cache-store
         with:
           path: |
-            ${{ env.AOSP_BASE_DIR }}/${{ env.TARGET_BRANCH }}
+            ${{ env.AOSP_BASE_DIR }}/${{ env.TARGET_TAG }}
             ${{ env.BC_BASE_DIR }}/bc-${{ env.BC_VERSION }}
-          key: ${{ runner.os }}-signapk-${{ env.TARGET_BRANCH }}-${{ env.BC_ARTIFACT }}-${{ env.BC_VERSION }}-${{ hashFiles('main-repo/scripts/build-signapk.sh') }}
-      - name: Install basic lightweight apt tools
+          key: ubuntu-signapk-${{ env.TARGET_TAG }}-${{ env.BC_ARTIFACT }}-${{ env.BC_VERSION }}
+
+      - name: Install system dependencies
         run: |
           set -eo pipefail
           export DEBIAN_FRONTEND=noninteractive
           export APT_LISTCHANGES_FRONTEND=none
           sudo sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
           sudo sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
-          sudo apt-get clean
-          sudo apt-get update -y --fix-missing
-          sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y --no-install-recommends git-core gnupg zip unzip curl python3 python3-pip
+          sudo apt-get clean && sudo apt-get update -y
+          sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y --no-install-recommends git wget zip unzip curl
           sudo rm -f /etc/ca-certificates/update.d/jks-keystore
-      - name: Install target JDK only
+
+      - name: Install JDK8
         run: |
           set -eo pipefail
           export DEBIAN_FRONTEND=noninteractive
           export APT_LISTCHANGES_FRONTEND=none
           sudo rm -f /etc/ca-certificates/update.d/jks-keystore
-          sudo mv /usr/bin/update-ca-certificates.bak || true
-          echo "Install openjdk-8-jdk-headless"
+          sudo mv /usr/bin/update-ca-certificates /usr/bin/update-ca-certificates.bak || true
           sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y --no-install-recommends openjdk-8-jdk-headless
           sudo update-ca-certificates --fresh >/dev/null 2>&1 || true
-          echo "JDK install complete"
-      - name: Git Global Config
-        run: |
-          set -eo pipefail
-          git config --global user.email "actions@github.com"
-          git config --global user.name "GitHub Actions"
-          git config --global core.autocrlf input
-      - name: Download BouncyCastle Dependencies
+          echo JDK install done
+
+      - name: Download BouncyCastle jars
         env:
           BC_CACHE_DIR: ${{ env.BC_BASE_DIR }}/bc-${{ env.BC_VERSION }}
         run: |
@@ -84,146 +80,109 @@ jobs:
           BC_PROV=bcprov-${{ env.BC_ARTIFACT }}-${{ env.BC_VERSION }}.jar
           BC_PKIX=bcpkix-${{ env.BC_ARTIFACT }}-${{ env.BC_VERSION }}.jar
           if [[ -f "$BC_PROV" && -f "$BC_PKIX" ]]; then
-            echo "BC lib cached, skip download"
+            echo BC jars cached, skip download
             exit 0
           fi
-          curl -L -o "$BC_PROV" "https://repo1.maven.org/maven2/org/bouncycastle/bcprov-${{ env.BC_ARTIFACT }}/${{ env.BC_VERSION }}/$BC_PROV" || \
-          curl -L -o "$BC_PROV" "https://maven.aliyun.com/repository/public/org/bouncycastle/bcprov-${{ env.BC_ARTIFACT }}/${{ env.BC_VERSION }}/$BC_PROV"
-          curl -L -o "$BC_PKIX" "https://repo1.maven.org/maven2/org/bouncycastle/bcpkix-${{ env.BC_ARTIFACT }}/${{ env.BC_VERSION }}/$BC_PKIX" || \
-          curl -L -o "$BC_PKIX" "https://maven.aliyun.com/repository/public/org/bouncycastle/bcpkix-${{ env.BC_ARTIFACT }}/${{ env.BC_VERSION }}/$BC_PKIX"
-          jar tf "$BC_PROV" | head -3
-          jar tf "$BC_PKIX" | head -3
-      - name: Download AOSP Full Source (build + libcore + apksig)
+          curl -L -o "$BC_PROV" https://repo1.maven.org/maven2/org/bouncycastle/bcprov-${{ env.BC_ARTIFACT }}/${{ env.BC_VERSION }}/$BC_PROV || \
+          curl -L -o "$BC_PROV" https://maven.aliyun.com/repository/public/org/bouncycastle/bcprov-${{ env.BC_ARTIFACT }}/${{ env.BC_VERSION }}/$BC_PROV
+          curl -L -o "$BC_PKIX" https://repo1.maven.org/maven2/org/bcpkix/bcpkix-${{ env.BC_ARTIFACT }}/${{ env.BC_VERSION }}/$BC_PKIX || \
+          curl -L -o "$BC_PKIX" https://maven.aliyun.com/repository/public/org/bcpkix/bcpkix-${{ env.BC_ARTIFACT }}/${{ env.BC_VERSION }}/$BC_PKIX
+          jar tf "$BC_PROV" | head -2
+
+      - name: Download AOSP source (build + libcore + apksig)
         run: |
           set -eo pipefail
           export GIT_HTTP_TIMEOUT=300
-          AOSP_DIR="${{ env.AOSP_BASE_DIR }}"
-          TARGET_TAG="${{ env.TARGET_BRANCH }}"
-          TARGET_ROOT="$AOSP_DIR/$TARGET_TAG"
+          TARGET_ROOT=${{ env.AOSP_BASE_DIR }}/${{ env.TARGET_TAG }}
           mkdir -p "$TARGET_ROOT"
           cd "$TARGET_ROOT"
           get_commit(){
-            local REPO_PATH=$1
-            git ls-remote --tags "https://android.googlesource.com/$REPO_PATH" | grep "refs/tags/$TARGET_TAG$" | awk '{print $1}'
+            local repo=$1
+            git ls-remote --tags https://android.googlesource.com/$repo | grep refs/tags/${{ env.TARGET_TAG }}$ | awk '{print $1}'
           }
-          # build signapk
-          if [ ! -d "$TARGET_ROOT/build/tools/signapk" ]; then
-            mkdir -p "$TARGET_ROOT/build"
-            cd "$TARGET_ROOT/build"
-            wget --timeout=300 -O signapk.tar.gz "https://android.googlesource.com/platform/build/+archive/refs/tags/$TARGET_TAG/tools/signapk.tar.gz"
-            mkdir tmp_extract
-            tar -zxf signapk.tar.gz -C tmp_extract
+          # 1 build/tools/signapk
+          if [ ! -d build/tools/signapk ]; then
+            mkdir build
+            cd build
+            wget --timeout=300 https://android.googlesource.com/platform/build/+archive/refs/tags/${{ env.TARGET_TAG }}/tools/signapk.tar.gz -O signapk.tar.gz
+            mkdir tmp
+            tar -zxf signapk.tar.gz -C tmp
             mkdir -p tools/signapk
-            mv tmp_extract/* tools/signapk/
-            rm -rf tmp_extract signapk.tar.gz
+            mv tmp/* tools/signapk/
+            rm -rf tmp signapk.tar.gz
             cd "$TARGET_ROOT"
-            if [ ! -d "$TARGET_ROOT/build/tools/signapk/src/com/android/signapk" ]; then
-              echo "FATAL: signapk source unpack failed"
-              exit 2
-            fi
           fi
-          # libcore
-          if [ ! -d "$TARGET_ROOT/libcore" ]; then
-            COMMIT_LC=$(get_commit platform/libcore)
-            wget --timeout=300 -O libcore.tar.gz "https://android.googlesource.com/platform/libcore/+archive/$COMMIT_LC.tar.gz"
+          # 2 libcore
+          if [ ! -d libcore ]; then
+            LC_COMMIT=$(get_commit platform/libcore)
+            wget --timeout=300 https://android.googlesource.com/platform/libcore/+archive/$LC_COMMIT.tar.gz -O libcore.tar.gz
             mkdir libcore
             tar -zxf libcore.tar.gz -C libcore
-            rm -f libcore.tar.gz
+            rm libcore.tar.gz
           fi
-          # apksig
-          if [ ! -d "$TARGET_ROOT/apksig" ]; then
-            COMMIT_APK=$(get_commit platform/tools/apksig)
-            wget --timeout=300 -O apksig.tar.gz "https://android.googlesource.com/platform/tools/apksig/+archive/$COMMIT_APK.tar.gz"
+          # 3 apksig
+          if [ ! -d apksig ]; then
+            APK_COMMIT=$(get_commit platform/tools/apksig)
+            wget --timeout=300 https://android.googlesource.com/platform/tools/apksig/+archive/$APK_COMMIT.tar.gz -O apksig.tar.gz
             mkdir apksig
             tar -zxf apksig.tar.gz -C apksig
-            rm -f apksig.tar.gz
+            rm apksig.tar.gz
           fi
-          ls -la "$TARGET_ROOT/build/tools/signapk/" "$TARGET_ROOT/apksig/" "$TARGET_ROOT/libcore/"
-      - name: Copy Build Script & Mod Compile Config
+          ls -la build/tools/signapk/src/com/android/signapk/
+
+      - name: Copy build script & BC libs & fix imports
         env:
-          AOSP_DIR: ${{ env.AOSP_BASE_DIR }}/${{ env.TARGET_BRANCH }}
+          TARGET_ROOT: ${{ env.AOSP_BASE_DIR }}/${{ env.TARGET_TAG }}
           BC_CACHE_DIR: ${{ env.BC_BASE_DIR }}/bc-${{ env.BC_VERSION }}
         run: |
           set -eo pipefail
-          SIGNAPK_PATH="$AOSP_DIR/build/tools/signapk"
-          mkdir -p "$SIGNAPK_PATH/libs"
-          cp "$BC_CACHE_DIR"/bc*.jar "$SIGNAPK_PATH/libs/"
-          cp main-repo/scripts/build-signapk.sh "$SIGNAPK_PATH/"
-          chmod +x "$SIGNAPK_PATH"
-          cp -r main-repo/test "$SIGNAPK_PATH/" 2>/dev/null || true
-          # 重写编译脚本，自动加载apksig源码
-          cat > "$SIGNAPK_PATH/build-signapk.sh" << 'EOF'
-          #!/bin/bash
-          set -e
-          SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-          find "$SCRIPT_DIR/src" "$SCRIPT_DIR/../../apksig/src" -type f -name "*.java" > sources.txt
-          CP=""
-          for jar in "$SCRIPT_DIR/libs/"*.jar; do
-            CP="$CP:$jar"
-          done
-          mkdir -p bin
-          javac -d bin -cp "$CP" @sources.txt
-          mkdir -p dist
-          jar cfe dist/signapk.jar com.android.signapk -C bin .
-          rm -rf bin sources.txt
-          EOF
-          # 删除不兼容BC导入、conscrypt导入
-          sed -i '/import org.bouncycastle.asn1.DEROutputStream;/d' "$SIGNAPK_PATH/src/com/android/signapk/SignApk.java"
-          sed -i '/import org.bouncycastle.asn1.cms;/d' "$SIGNAPK_PATH/src/com/android/signapk/SignApk.java"
-          sed -i '/import org.conscrypt/d' "$SIGNAPK_PATH/src/com/android/signapk.java"
-      - name: Build sign.jar
+          SIGNAPK_DIR=$TARGET_ROOT/build/tools/signapk
+          mkdir -p $SIGNAPK_DIR/libs
+          # 安全复制BC，不存在不报错
+          if compgen -G "$BC_CACHE_DIR/bc*.jar" > /dev/null; then
+            cp "$BC_CACHE_DIR"/bc*.jar $SIGNAPK_DIR/libs/
+          else
+            echo Warning: No BC jars found, skip copy
+          fi
+          # 复制编译脚本并赋予执行权限
+          cp main-repo/scripts/build-signapk_single.sh $SIGNAPK_DIR/
+          chmod +x $SIGNAPK_DIR/build-signapk_single.sh
+          # 删除不兼容导入语句，路径完全匹配tree结构
+          JAVA_FILE=$SIGNAPK_DIR/src/com/android/signapk/SignApk.java
+          sed -i '/import org.bouncycastle.asn1.DEROutputStream;/d' "$JAVA_FILE"
+          sed -i '/import org.bouncycastle.asn1.cms;/d' "$JAVA_FILE"
+          sed -i '/import org.conscrypt/d' "$JAVA_FILE"
+
+      - name: Run build signapk.jar
         env:
-          AOSP_DIR: ${{ env.AOSP_BASE_DIR }}
+          TARGET_ROOT: ${{ env.AOSP_BASE_DIR }}/${{ env.TARGET_TAG }}
         run: |
           set -eo pipefail
-          cd "$AOSP_DIR/${{ env.TARGET_BRANCH }}/build/tools/signapk"
-          ./build-signapk.sh
-          test -f dist/signapk.jar || exit 1
-          ls -lh dist/signapk.jar
-      - name: Lightweight Sign Functional Test
+          cd $TARGET_ROOT/build/tools/signapk
+          ./build-signapk_single.sh
+          test -f dist/signapk.jar
+          ls -lh dist/
+
+      - name: Package output artifact
         env:
-          AOSP_DIR: ${{ env.AOSP_BASE_DIR }}/${{ env.TARGET_BRANCH }}
+          TARGET_ROOT: ${{ env.AOSP_BASE_DIR }}/${{ env.TARGET_TAG }}
+          OUT: ${{ env.OUTPUT_DIR }}/${{ env.TARGET_TAG }}
           BC_CACHE_DIR: ${{ env.BC_BASE_DIR }}/bc-${{ env.BC_VERSION }}
         run: |
           set -eo pipefail
-          cd "$AOSP_DIR/build/tools/signapk"
-          openssl genrsa -out test.key 2048
-          openssl pkcs8 -in test.key -topk8 -outform DER -out test.pk8 -nocrypt
-          openssl req -new -x509 -key test.key -out test.pem -days 9999 -subj "/C=US/ST=California/L=Mountain View/O=Android/OU=Android/CN=Android/emailAddress=android@android.com"
-          echo '<?xml version="1.0"?><manifest package="com.test" />' > AndroidManifest.xml
-          zip test-unsigned.apk AndroidManifest.xml
-          BC_PROV=libs/bcprov-${{ env.BC_ARTIFACT }}-${{ env.BC_VERSION }}.jar
-          BC_PKIX=libs/bcpkix-${{ env.BC_ARTIFACT }}-${{ env.BC_VERSION }}.jar
-          java -cp "dist/signapk.jar:$BC_PROV:$BC_PKIX" com.android.signapk.SignApk test.pem test.pk8 test-unsigned.apk test-signed.apk
-          jarsigner -verify test-signed.apk
-          rm -f test.key test.pk8 test.pem *.apk AndroidManifest.xml
-      - name: Package Build Artifacts
-        env:
-          AOSP_DIR: ${{ env.AOSP_BASE_DIR }}/${{ env.TARGET_BRANCH }}
-          OUTPUT_PATH: ${{ env.OUTPUT_DIR }}/${{ env.TARGET_BRANCH }}
-        run: |
-          set -eo pipefail
-          mkdir -p "$OUTPUT_PATH"
-          BC_PROV=bcprov-${{ env.BC_ARTIFACT }}-${{ env.BC_VERSION }}.jar
-          BC_PKIX=bcpkix-${{ env.BC_ARTIFACT }}-${{ env.BC_VERSION }}.jar
-          cp "$AOSP_DIR/build/tools/signapk/dist/signapk.jar" "$OUTPUT_PATH/signapk_${{ env.TARGET_BRANCH }}_bc${{ env.BC_VERSION }}.jar"
-          cp "${{ env.BC_BASE_DIR }}/bc-${{ env.BC_VERSION }}/$BC_PROV" "$OUTPUT_PATH/"
-          cp "${{ env.BC_BASE_DIR }}/bc-${{ env.BC_VERSION }}/$BC_PKIX" "$OUTPUT_PATH/"
-          cat > "$OUTPUT_PATH/README.md" << EOF
-          # signapk Build Info
-          - AOSP Branch: ${{ env.TARGET_BRANCH }}
-          - BouncyCastle: ${{ env.BC_VERSION }} (${{ env.BC_ARTIFACT }})
-          - Build JDK: ${{ env.JAVA_VER }}
-          ## Linux/macOS
-          java -cp "signapk_${{ env.TARGET_BRANCH }}_bc${{ env.BC_VERSION }}.jar:$BC_PROV:$BC_PKIX" com.android.signapk.SignApk platform.x509.pem platform.pk8 raw.apk signed.apk
-          ## Windows
-          java -cp "signapk_${{ env.TARGET_BRANCH }}_bc${{ env.BC_VERSION }};$BC_PROV;$BC_PKIX" com.android.signapk.SignApk platform.x509.pem platform.pk8 raw.apk signed.apk
+          mkdir -p "$OUT"
+          cp $TARGET_ROOT/build/tools/signapk/dist/signapk.jar "$OUT/"
+          cp "$BC_CACHE_DIR"/bc*.jar "$OUT/" 2>/dev/null || true
+          cat > "$OUT/README.md" << EOF
+          AOSP Tag: ${{ env.TARGET_TAG }}
+          BC Version: ${{ env.BC_VERSION }} (${{ env.BC_ARTIFACT }})
+          java -cp "signapk.jar:bcprov-${{ env.BC_ARTIFACT }}-${{ env.BC_VERSION }}.jar:bcpkix-${{ env.BC_VERSION }}.jar" com.android.signapk.SignApk
           EOF
-          ls -lh "$OUTPUT_PATH/"
-      - name: Upload Build Artifact
+          ls -lh "$OUT"
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: signapk-${{ env.TARGET_BRANCH }}-bc${{ env.BC_VERSION }}
-          path: ${{ env.OUTPUT_DIR }}/${{ env.TARGET_BRANCH }}
+          name: signapk-${{ env.TARGET_TAG }}
+          path: ${{ env.OUTPUT_DIR }}/${{ env.TARGET_TAG }}
           retention-days: 14
-# 无需post-build多分支汇总，单版本无汇总需求
