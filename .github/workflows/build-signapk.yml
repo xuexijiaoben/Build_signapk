@@ -209,26 +209,27 @@ jobs:
           fi
           ls -la "$TARGET_ROOT/build/tools/signapk/" "$TARGET_ROOT/apksig/" "$TARGET_ROOT/libcore/"
         if: env.SKIP_JOB != 'true'
-      - name: Copy Build Script & Mod Compile Config
+      - name: Copy Build Script & Modify SignApk.java imports
+        if: env.SKIP_JOB != 'true'
         env:
-          AOSP_DIR: ${{ env.AOSP_BASE_DIR }}/${{ matrix.android_branch }}
-          BC_CACHE_DIR: ${{ env.BC_BASE_DIR }}/bc-${{ matrix.bc_version }}
+          AOSP_DIR: ${{ env.AOSP_BASE_DIR }}/${{ env.TARGET_BRANCH }}
+          BC_CACHE_DIR: ${{ env.BC_BASE_DIR }}/bc-${{ env.BC_VERSION }}
         run: |
           set -eo pipefail
           SIGNAPK_PATH="$AOSP_DIR/build/tools/signapk"
           mkdir -p "$SIGNAPK_PATH/libs"
           # 复制BC依赖包
           cp "$BC_CACHE_DIR"/bc*.jar "$SIGNAPK_PATH/libs/"
-          # 复制本地写好的完整编译脚本 + 赋予执行权限
+          # 复制编译脚本并授权
           cp main-repo/scripts/build-signapk.sh "$SIGNAPK_PATH/"
           chmod +x "$SIGNAPK_PATH/build-signapk.sh"
-          # 测试目录（可选）
           cp -r main-repo/test "$SIGNAPK_PATH/" 2>/dev/null || true
-
-          # 保留：删除高版本BC、conscrypt不兼容导入（必须保留，否则编译报错）
+          # 打印目录用于排错
+          ls -la "$SIGNAPK_PATH/src/com/android/signapk/"
+          # 修正完整文件路径
           sed -i '/import org.bouncycastle.asn1.DEROutputStream;/d' "$SIGNAPK_PATH/src/com/android/signapk/SignApk.java"
-          sed -i '/import org.bouncycastle.asn1.cms;/d' "$SIGNAPK_PATH/src/com/android/signapk/SignApk.java"
-          sed -i '/import org.conscrypt/d' "$SIGNAPK_PATH/src/com/android/signapk.java"
+          sed -i '/import org.bouncycastle.asn1.cms;/d' "$SIGNAPK_PATH/src/com/android/signapk.java"
+          sed -i '/import org.conscrypt/d' "$SIGNAPK_PATH/src/com/android/signapk/SignApk.java"
         if: env.SKIP_JOB != 'true'
       - name: Build sign.jar
         env:
