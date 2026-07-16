@@ -2,14 +2,6 @@ name: Build SignApk android-12.0.0_r1
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main, develop ]
-    paths:
-      - scripts/build-signapk_full.sh
-      - .github/workflows/build-signapk-android12.yml
-  pull_request:
-    branches: [ main ]
-
 env:
   TAG: android-12.0.0_r1
   ROOT: ${{ github.workspace }}/aosp-src
