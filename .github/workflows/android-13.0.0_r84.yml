@@ -1,0 +1,138 @@
+name: full SignApk android-13.0.0_r84
+
+on:
+  workflow_dispatch:
+
+env:
+  TAG: android-13.0.0_r84
+  ROOT: ${{ github.workspace }}/aosp-src
+  BC_CACHE: ${{ github.workspace }}/bc-cache
+  OUT: ${{ github.workspace }}/dist-output
+  BC_VER: 1.69
+  BC_ART: jdk15on
+  JAVA: 8
+
+concurrency:
+  group: signapk-12-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout scripts
+        uses: actions/checkout@v4
+        with:
+          path: self-repo
+
+      - name: Setup JDK ${{ env.JAVA }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA }}
+
+      - name: Install base tools
+        run: |
+          set -eo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          sudo sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
+          sudo apt-get clean && sudo apt update -y
+          sudo apt install -y git wget curl zip unzip openssl
+          sudo rm -f /etc/ca-certificates/update.d/jks-keystore
+
+      - name: Cache BC jars
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BC_CACHE }}
+          key: bc-${{ env.BC_ART }}-${{ env.BC_VER }}
+
+      - name: Download BouncyCastle
+        run: |
+          set -eo pipefail
+          mkdir -p ${{ env.BC_CACHE }}
+          cd ${{ env.BC_CACHE }}
+          
+          PROV=bcprov-${{ env.BC_ART }}-${{ env.BC_VER }}.jar
+          PKIX=bcpkix-${{ env.BC_ART }}-${{ env.BC_VER }}.jar
+
+          if [[ ! -f $PROV || ! -f $PKIX ]]; then
+            echo "Downloading BouncyCastle jars..."
+            curl -L -f -o $PROV https://repo1.maven.org/maven2/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$PROV || \
+            curl -L -f -o $PROV https://maven.aliyun.com/repository/public/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$PROV || \
+            { echo "Failed to download $PROV"; exit 1; }
+            
+            curl -L -f -o $PKIX https://repo1.maven.org/maven2/org/bouncycastle/bcpkix-${{ env.BC_ART }}/${{ env.BC_VER }}/$PKIX || \
+            curl -L -f -o $PKIX https://maven.aliyun.com/repository/public/org/bouncycastle/bcpkix-${{ env.BC_ART }}/${{ env.BC_VER }}/$PKIX || \
+            { echo "Failed to download $PKIX"; exit 1; }
+            
+            echo "Download completed. Verifying..."
+            ls -lh $PROV $PKIX
+            unzip -qq -t $PROV >/dev/null && echo "$PROV valid" || { echo "$PROV corrupted"; rm -f $PROV; exit 1; }
+            unzip -qq -t $PKIX >/dev/null && echo "$PKIX valid" || { echo "$PKIX corrupted"; rm -f $PKIX; exit 1; }
+          fi
+
+      - name: Clone AOSP repositories
+        run: |
+          set -eo pipefail
+          mkdir -p ${{ env.ROOT }}
+          cd ${{ env.ROOT }}
+          git clone --depth 1 -b ${{ env.TAG }} https://android.googlesource.com/platform/build build
+          git clone --depth 1 -b ${{ env.TAG }} https://android.googlesource.com/platform/tools/apksig apksig
+          git clone --depth 1 -b ${{ env.TAG }} https://android.googlesource.com/platform/libcore libcore
+          ls -la
+
+      - name: Prepare compile folder
+        run: |
+          set -eo pipefail
+          SIGNAPK=${{ env.ROOT }}/build/tools/signapk
+          mkdir -p $SIGNAPK/libs
+          cp ${{ env.BC_CACHE }}/*.jar $SIGNAPK/libs/
+          cp ${{ github.workspace }}/self-repo/scripts/build-signapk_full.sh $SIGNAPK/
+          chmod +x $SIGNAPK/build-signapk_full.sh
+          # 定位目标java文件
+          JAVA_FILE=$SIGNAPK/src/com/android/signapk/SignApk.java
+          # 1 删除conscrypt、废弃cms导入
+          sed -i '/org\.conscrypt/d' "$JAVA_FILE"
+          sed -i '/import .*OpenSSLProvider/d' "$JAVA_FILE"
+          sed -i '/import org.bouncycastle.asn1.cms;/d' "$JAVA_FILE"
+          sed -i '/CMSObjectIdentifiers/d' "$JAVA_FILE"
+          # 2 DEROutputStream → ASN1OutputStream 兼容修复（解决dos变量找不到）
+          sed -i 's/DEROutputStream/ASN1OutputStream/g' "$JAVA_FILE"
+          sed -i '/import org.bouncycastle.asn1.DEROutputStream;/d' "$JAVA_FILE"
+          sed -i '/import org.bouncycastle.asn1;/a import org.bouncycastle.asn1.ASN1OutputStream;' "$JAVA_FILE"
+          # 3 新增：修复type变量未初始化编译报错
+          sed -i 's/ASN1ObjectIdentifier type;/ASN1ObjectIdentifier type = null;/g' "$JAVA_FILE"
+          echo "=== Source file check finished ==="
+          ls -la $SIGNAPK/src/com/android/signapk/
+
+      - name: Compile signapk.jar
+        env:
+          ROOT: ${{ env.ROOT }}
+        run: |
+          set -eo pipefail
+          cd ${{ env.ROOT }}/build/tools/signapk
+          ./build-signapk_full.sh
+
+      - name: Package artifact
+        run: |
+          set -eo pipefail
+          mkdir -p ${{ env.OUT }}
+          cp ${{ env.ROOT }}/build/tools/signapk/dist/signapk.jar ${{ env.OUT }}/
+          cp ${{ env.BC_CACHE }}/*.jar ${{ env.OUT }}/
+
+          cat > ${{ env.OUT }}/README.md <<EOF
+          AOSP Tag: ${{ env.TAG }}
+          BouncyCastle: ${{ env.BC_VER }} ${{ env.BC_ART }}
+
+          Usage:
+          java -cp "signapk.jar:bcprov-${{ env.BC_ART }}-${{ env.BC_VER }}.jar:bcpkix-${{ env.BC_ART }}-${{ env.BC_VER }}.jar" com.android.signapk.SignApk
+          EOF
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: signapk-android12
+          path: ${{ env.OUT }}
+          retention-days: 14
