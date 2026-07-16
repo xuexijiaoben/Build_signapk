@@ -41,16 +41,16 @@ jobs:
           - android-14.0.0_r1
         include:
           - android_branch: android-12.0.0_r1
-            bc_version: '1.85'
-            bc_artifact: 'jdk18on'
+            bc_version: '1.69'
+            bc_artifact: 'jdk15on'
             java_version: '8'
           - android_branch: android-13.0.0_r1
-            bc_version: '1.85'
-            bc_artifact: 'jdk18on'
+            bc_version: '1.69'
+            bc_artifact: 'jdk15on'
             java_version: '8'
           - android_branch: android-14.0.0_r1
-            bc_version: '1.85'
-            bc_artifact: 'jdk18on'
+            bc_version: '1.70'
+            bc_artifact: 'jdk17on'
             java_version: '11'
     steps:
       - name: Checkout repository
@@ -191,11 +191,33 @@ jobs:
           mkdir -p "$SIGNAPK_PATH/libs"
           cp "$BC_CACHE_DIR"/bc*.jar "$SIGNAPK_PATH/libs/"
           cp main-repo/scripts/build-signapk.sh "$SIGNAPK_PATH/"
-          chmod +x "$SIGNAPK_PATH/build-signapk.sh"
+          chmod +x "$SIGNAPK_PATH/"
           cp -r main-repo/test "$SIGNAPK_PATH/" 2>/dev/null || true
-          # 更换sed分隔符# 解决路径/冲突报错
-          sed -i 's#find "$SCRIPT_DIR/src"#find "$SCRIPT_DIR/src" "$SCRIPT_DIR/../../apksig/src"#g' "$SIGNAPK_PATH/build-signapk.sh"
-          # 移除conscrypt不存在的导入语句
+
+          # 方案：直接重写收集源码逻辑，不再依赖sed精准匹配
+          cat > "$SIGNAPK_PATH/build-signapk.sh" << 'EOF'
+          #!/bin/bash
+          set -e
+          SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+          # 同时包含 signapk + apksig 源码
+          find "$SCRIPT_DIR/src" "$SCRIPT_DIR/../../apksig/src" -type f -name "*.java" > sources.txt
+          # BC classpath
+          CP=""
+          for jar in "$SCRIPT_DIR/libs/"*.jar; do
+            CP="$CP:$jar"
+          done
+          # 编译
+          mkdir -p bin
+          javac -d bin -cp "$CP" @sources.txt
+          # 打包
+          mkdir -p dist
+          jar cfe dist/signapk.jar com.android.signapk.SignApk -C bin .
+          rm -rf bin sources.txt
+          EOF
+          # 删除不兼容的BC导入行
+          sed -i '/import org.bouncycastle.asn1.DEROutputStream;/d' "$SIGNAPK_PATH/src/com/android/signapk/SignApk.java"
+          sed -i '/import org.bouncycastle.asn1.cms;/d' "$SIGNAPK_PATH/src/com/android/signapk/SignApk.java"
+          # 删除conscrypt行（之前需求）
           sed -i '/import org.conscrypt/d' "$SIGNAPK_PATH/src/com/android/signapk/SignApk.java"
       - name: Build sign.jar
         env:
