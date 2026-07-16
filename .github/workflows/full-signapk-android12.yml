@@ -54,11 +54,25 @@ jobs:
           cd ${{ env.BC_CACHE }}
           P=bcprov-${{ env.BC_ART }}-${{ env.BC_VER }}.jar
           X=bcpkix-${{ env.BC_VER }}.jar
+
           if [[ ! -f $P || ! -f $X ]]; then
-            curl -L -o $P https://repo1.maven.org/maven2/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$P || \
-            curl -L -o $P https://maven.aliyun.com/repository/public/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$P
-            curl -L -o $X https://repo1.maven.org/maven2/org/bcpkix/bcpkix/${{ env.BC_VER }}/$X || \
-            curl -L -o $X https://maven.aliyun.com/repository/public/org/bcpkix/${{ env.BC_VER }}/$X
+          echo "Downloading BouncyCastle jars..."
+          
+          # 主站 + 备用镜像 + 校验
+          curl -L -f -o $P https://repo1.maven.org/maven2/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$P || \
+          curl -L -f -o $P https://maven.aliyun.com/repository/public/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$P || \
+          { echo "Failed to download $P"; exit 1; }
+          
+          curl -L -f -o $X https://repo1.maven.org/maven2/org/bcpkix/bcpkix/${{ env.BC_VER }}/$X || \
+          curl -L -f -o $X https://maven.aliyun.com/repository/public/org/bcpkix/${{ env.BC_VER }}/$X || \
+          { echo "Failed to download $X"; exit 1; }
+          
+          echo "Download completed. Verifying..."
+          ls -lh $P $X
+          unzip -qq -t $P >/dev/null && echo "$P is valid" || { echo "$P is corrupted!"; rm -f $P; exit 1; }
+          unzip -qq -t $X >/dev/null && echo "$X is valid" || { echo "$X is corrupted!"; rm -f $X; exit 1; }
+          else
+          echo "Using cached BC jars."
           fi
 
       - name: Clone AOSP repositories
