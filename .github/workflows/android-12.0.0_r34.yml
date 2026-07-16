@@ -1,4 +1,4 @@
-name: full SignApk android-12.0.0_r1
+name: full SignApk android-12.0.0_r34
 
 on:
   workflow_dispatch:
@@ -80,19 +80,23 @@ jobs:
         run: |
           set -eo pipefail
           SIGNAPK=${{ env.ROOT }}/build/tools/signapk
-
           mkdir -p $SIGNAPK/libs
           cp ${{ env.BC_CACHE }}/*.jar $SIGNAPK/libs/
           cp ${{ github.workspace }}/self-repo/scripts/build-signapk_full.sh $SIGNAPK/
           chmod +x $SIGNAPK/build-signapk_full.sh
-
-          # 清理冲突 import
+          # 定位目标java文件
           JAVA_FILE=$SIGNAPK/src/com/android/signapk/SignApk.java
+          # 1 删除conscrypt、废弃cms导入
           sed -i '/org\.conscrypt/d' "$JAVA_FILE"
           sed -i '/import .*OpenSSLProvider/d' "$JAVA_FILE"
-
+          sed -i '/import org.bouncycastle.asn1.cms;/d' "$JAVA_FILE"
+          sed -i '/CMSObjectIdentifiers/d' "$JAVA_FILE"
+          # 2 DEROutputStream → ASN1OutputStream 兼容修复（解决dos变量找不到）
+          sed -i 's/DEROutputStream/ASN1OutputStream/g' "$JAVA_FILE"
+          sed -i '/import org.bouncycastle.asn1.DEROutputStream;/d' "$JAVA_FILE"
+          sed -i '/import org.bouncycastle.asn1;/a import org.bouncycastle.asn1.ASN1OutputStream;' "$JAVA_FILE"
           echo "=== Source check ==="
-          ls -la $SIGNAPK/src/com/android/signapk/ | head -10
+          ls -la $SIGNAPK/src/com/android/signapk/
 
       - name: Compile signapk.jar
         env:
