@@ -1,0 +1,132 @@
+name: Build SignApk Full AOSP Source android-12.0.0_r1
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - scripts/build-signapk.sh
+      - .github/workflows/build-signapk-android12.yml
+  pull_request:
+    branches: [ main ]
+env:
+  TAG_NAME: android-12.0.0_r1
+  WORKSPACE_ROOT: ${{ github.workspace }}
+  AOSP_FULL_ROOT: ${{ github.workspace }}/aosp-full
+  BC_CACHE: ${{ github.workspace }}/bc-cache-1.69
+  ARTIFACT_OUT: ${{ github.workspace }}/output-signapk
+  BC_VER: 1.69
+  BC_ART: jdk15on
+  JDK_VERSION: 8
+concurrency:
+  group: signapk-android12-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build-signapk-full-aosp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout current repo (contains build-signapk.sh)
+        uses: actions/checkout@v4
+        with
+          path: self-repo
+
+      - name: Setup JDK 8
+        uses: actions/setup-java@v4
+        with
+          distribution: temurin
+          java-version: ${{ env.JDK_VERSION }}
+
+      - name: Install system tools & git
+        run: |
+          set -eo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          sudo sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
+          sudo apt-get clean && sudo apt update -y
+          sudo apt-get install -y --no-install-recommends git wget curl zip unzip openssl
+          # 屏蔽证书脚本防止进程被杀
+          sudo rm -f /etc/ca-certificates/update.d/jks-keystore
+          sudo mv /usr/bin/update-ca-certificates.bak 2>/dev/null || true
+
+      - name: Cache BouncyCastle jars
+        uses: actions/cache@v4
+        id: cache-bc
+        with
+          path: ${{ env.BC_CACHE }}
+          key: bc-${{ env.BC_ART }}-${{ env.BC_VER }}
+
+      - name: Download BC bcprov & bcpkix
+        run: |
+          set -eo pipefail
+          mkdir -p ${{ env.BC_CACHE }}
+          cd ${{ env.BC_CACHE }}
+          PROV=bcprov-${{ env.BC_ART }}-${{ env.BC_VER }}.jar
+          PKIX=bcpkix-${{ env.BC_VER }}.jar
+          if [[ ! -f $PROV || ! -f $PKIX ]]; then
+            curl -L -o $PROV https://repo1.maven.org/maven2/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$PROV || curl -L -o $PROV https://maven.aliyun.com/repository/public/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$PROV
+            curl -L -o $PKIX https://repo1.maven.org/maven2/org/bcpkix/bcpkix/${{ env.BC_VER }}/$PKIX || curl -L -o $PKIX https://maven.aliyun.com/repository/public/org/bcpkix/${{ env.BC_VER }}/$PKIX
+          fi
+          ls -lh
+
+      - name: Clone Full AOSP platform source (tag android-12.0.0_r1)
+        run: |
+          set -eo pipefail
+          mkdir -p ${{ env.AOSP_FULL_ROOT }}
+          cd ${{ env.AOSP_FULL_ROOT }}
+          # 拉取完整platform仓库，包含build/tools/signapk + tools/apksig + libcore
+          git clone --depth 1 --single-branch -b ${{ env.TAG_NAME }} https://android.googlesource.com/platform .
+          echo "AOSP full source clone done"
+          ls -la build/tools/ tools/ libcore/
+
+      - name: Prepare compile environment
+        run: |
+          set -eo pipefail
+          SIGNAPK_ROOT=${{ env.AOSP_FULL_ROOT }}/build/tools/signapk
+          mkdir -p $SIGNAPK_ROOT/libs
+          # 复制BC包到signapk lib目录
+          cp ${{ env.BC_CACHE }}/*.jar $SIGNAPK_ROOT/libs/
+          # 复制编译脚本到signapk目录并授权
+          cp ${{ env.WORKSPACE_ROOT }}/self-repo/scripts/build-signapk.sh $SIGNAPK_ROOT/
+          chmod +x $SIGNAPK_ROOT/build-signapk.sh
+          # 删除不兼容的BC与conscrypt导入
+          TARGET_JAVA=$SIGNAPK_ROOT/src/com/android/signapk/SignApk.java
+          sed -i '/import org.bouncycastle.asn1.DEROutputStream;/d' $TARGET_JAVA
+          sed -i '/import org.bouncycastle.asn1.cms;/d' $TARGET_JAVA
+          sed -i '/import org.conscrypt/d' $TARGET_JAVA
+          # 打印目录确认依赖存在
+          echo "=== apksig source check ==="
+          ls -la ${{ env.AOSP_FULL_ROOT }}/tools/apksig/src
+          echo "=== signapk source ==="
+          ls -la $SIGNAPK_ROOT/src/com/android/signapk
+
+      - name: Execute build signapk.jar
+        run: |
+          set -eo pipefail
+          SIGNAPK_ROOT=${{ env.AOSP_FULL_ROOT }}/build/tools/signapk
+          cd $SIGNAPK_ROOT
+          ./build-signapk.sh
+          test -f dist/signapk.jar
+          ls -lh dist/
+
+      - name: Package output artifact
+        run: |
+          set -eo pipefail
+          mkdir -p ${{ env.ARTIFACT_OUT }}
+          SIGNAPK_ROOT=${{ env.AOSP_FULL_ROOT }}/build/tools/signapk
+          cp $SIGNAPK_ROOT/dist/signapk.jar ${{ env.ARTIFACT_OUT }}/
+          cp ${{ env.BC_CACHE }}/*.jar ${{ env.ARTIFACT_OUT }}/
+          # 生成使用说明
+          cat > ${{ env.ARTIFACT }}/README.md <<EOF
+AOSP TAG: ${{ env.TAG_NAME }}
+BC Version: ${{ env.BC_VER }} ${{ env.BC_ART }}
+Compile JDK: ${{ env.JDK_VERSION }}
+Run Command:
+java -cp "signapk.jar:bcprov-${{ env.BC_ART }}-${{ env.BC_VER }}.jar:bcpkix-${{ env.BC_VER }}.jar" com.android.signapk platform.x509.pem platform.pk8 input.apk output.apk
+EOF
+          ls -lh ${{ env.ARTIFACT_OUT }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with
+          name: signapk-${{ env.TAG_NAME }}
+          path: ${{ env.ARTIFACT_OUT }}
+          retention-days: 14
