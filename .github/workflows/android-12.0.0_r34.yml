@@ -8,7 +8,7 @@ env:
   ROOT: ${{ github.workspace }}/aosp-src
   BC_CACHE: ${{ github.workspace }}/bc-cache
   OUT: ${{ github.workspace }}/dist-output
-  BC_VER: 1.68
+  BC_VER: 1.69
   BC_ART: jdk15on
   JAVA: 8
 
@@ -53,17 +53,24 @@ jobs:
           set -eo pipefail
           mkdir -p ${{ env.BC_CACHE }}
           cd ${{ env.BC_CACHE }}
-    
+          
           PROV=bcprov-${{ env.BC_ART }}-${{ env.BC_VER }}.jar
           PKIX=bcpkix-${{ env.BC_ART }}-${{ env.BC_VER }}.jar
 
           if [[ ! -f $PROV || ! -f $PKIX ]]; then
-            echo "Downloading BouncyCastle 1.68..."
+            echo "Downloading BouncyCastle jars..."
             curl -L -f -o $PROV https://repo1.maven.org/maven2/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$PROV || \
-            curl -L -f -o $PROV https://maven.aliyun.com/repository/public/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$PROV
-      
+            curl -L -f -o $PROV https://maven.aliyun.com/repository/public/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$PROV || \
+            { echo "Failed to download $PROV"; exit 1; }
+            
             curl -L -f -o $PKIX https://repo1.maven.org/maven2/org/bouncycastle/bcpkix-${{ env.BC_ART }}/${{ env.BC_VER }}/$PKIX || \
-            curl -L -f -o $PKIX https://maven.aliyun.com/repository/public/org/bouncycastle/bcpkix-${{ env.BC_ART }}/${{ env.BC_VER }}/$PKIX
+            curl -L -f -o $PKIX https://maven.aliyun.com/repository/public/org/bouncycastle/bcpkix-${{ env.BC_ART }}/${{ env.BC_VER }}/$PKIX || \
+            { echo "Failed to download $PKIX"; exit 1; }
+            
+            echo "Download completed. Verifying..."
+            ls -lh $PROV $PKIX
+            unzip -qq -t $PROV >/dev/null && echo "$PROV valid" || { echo "$PROV corrupted"; rm -f $PROV; exit 1; }
+            unzip -qq -t $PKIX >/dev/null && echo "$PKIX valid" || { echo "$PKIX corrupted"; rm -f $PKIX; exit 1; }
           fi
 
       - name: Clone AOSP repositories
