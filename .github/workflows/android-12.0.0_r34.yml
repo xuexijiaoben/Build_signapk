@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  TAG: android-12.0.0_r1
+  TAG: android-12.0.0_r34
   ROOT: ${{ github.workspace }}/aosp-src
   BC_CACHE: ${{ github.workspace }}/bc-cache
   OUT: ${{ github.workspace }}/dist-output
