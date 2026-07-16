@@ -71,8 +71,8 @@ jobs:
           # copy BC jars
           cp ${{ env.BC_CACHE }}/*.jar $SIGNAPK/libs/
           # copy build script
-          cp ${{ github.workspace }}/self-repo/scripts/build-signapk.sh $SIGNAPK/
-          chmod +x $SIGNAPK/build-signapk.sh
+          cp ${{ github.workspace }}/self-repo/scripts/build-signapk_full.sh $SIGNAPK/
+          chmod +x $SIGNAPK/build-signapk_full.sh
           # 删除不兼容导入
           JAVA_FILE=$SIGNAPK/src/com/android/signapk/SignApk.java
           sed -i '/import org.bouncycastle.asn1.DEROutputStream;/d' $JAVA_FILE
@@ -82,7 +82,7 @@ jobs:
         run: |
           set -eo pipefail
           cd ${{ env.ROOT }}/build/tools/signapk
-          ./build-signapk.sh
+          ./build-signapk_full.sh
       - name: Package artifact
         run: |
           set -eo pipefail
