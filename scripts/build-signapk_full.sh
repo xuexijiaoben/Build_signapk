@@ -32,15 +32,18 @@ CP="${BC_PROV}:${BC_PKIX}"
 echo "BC Provider: $(basename $BC_PROV)"
 echo "BC PKIX: $(basename $BC_PKIX)"
 
-# 清理 SignApk.java 中的冲突 import 和代码
+# 深度清理 SignApk.java
 JAVA_FILE="${SRC_SIGN}/com/android/signapk/SignApk.java"
 
-sed -i '/org\.bouncycastle\.asn1\.DEROutputStream/d' "$JAVA_FILE"
+sed -i '/DEROutputStream/d' "$JAVA_FILE"
+sed -i '/CMSObjectIdentifiers/d' "$JAVA_FILE"
 sed -i '/org\.bouncycastle\.asn1\.cms/d' "$JAVA_FILE"
-sed -i '/org\.conscrypt/d' "$JAVA_FILE"
 sed -i '/OpenSSLProvider/d' "$JAVA_FILE"
+sed -i '/org\.conscrypt/d' "$JAVA_FILE"
 
-# 收集源码（限制范围）
+# 替换 DEROutputStream 为兼容写法（关键修复）
+sed -i 's/new DEROutputStream(out)/new org.bouncycastle.asn1.DEROutputStream(out)/' "$JAVA_FILE" || true
+
 echo "=== Collecting source files ==="
 find "$SRC_SIGN" -name "*.java" > sources.txt
 find "$SRC_APK" -path "*/com/android/apksig/*" \
