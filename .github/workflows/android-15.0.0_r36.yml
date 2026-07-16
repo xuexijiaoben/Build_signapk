@@ -10,7 +10,7 @@ env:
   OUT: ${{ github.workspace }}/dist-output
   BC_VER: 1.85
   BC_ART: jdk18on
-  JAVA: 8
+  JAVA: 11
 
 concurrency:
   group: signapk-12-${{ github.ref }}
