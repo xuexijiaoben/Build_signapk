@@ -52,27 +52,30 @@ jobs:
           set -eo pipefail
           mkdir -p ${{ env.BC_CACHE }}
           cd ${{ env.BC_CACHE }}
-          P=bcprov-${{ env.BC_ART }}-${{ env.BC_VER }}.jar
-          X=bcpkix-${{ env.BC_VER }}.jar
+    
+          PROV=bcprov-${{ env.BC_ART }}-${{ env.BC_VER }}.jar
+          PKIX=bcpkix-${{ env.BC_ART }}-${{ env.BC_VER }}.jar   # ← 关键修复：加上 -jdk15on
 
-          if [[ ! -f $P || ! -f $X ]]; then
-          echo "Downloading BouncyCastle jars..."
-          
-          # 主站 + 备用镜像 + 校验
-          curl -L -f -o $P https://repo1.maven.org/maven2/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$P || \
-          curl -L -f -o $P https://maven.aliyun.com/repository/public/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$P || \
-          { echo "Failed to download $P"; exit 1; }
-          
-          curl -L -f -o $X https://repo1.maven.org/maven2/org/bcpkix/bcpkix/${{ env.BC_VER }}/$X || \
-          curl -L -f -o $X https://maven.aliyun.com/repository/public/org/bcpkix/${{ env.BC_VER }}/$X || \
-          { echo "Failed to download $X"; exit 1; }
-          
-          echo "Download completed. Verifying..."
-          ls -lh $P $X
-          unzip -qq -t $P >/dev/null && echo "$P is valid" || { echo "$P is corrupted!"; rm -f $P; exit 1; }
-          unzip -qq -t $X >/dev/null && echo "$X is valid" || { echo "$X is corrupted!"; rm -f $X; exit 1; }
+          if [[ ! -f $PROV || ! -f $PKIX ]]; then
+            echo "Downloading BouncyCastle jars..."
+      
+            # bcprov
+            curl -L -f -o $PROV https://repo1.maven.org/maven2/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$PROV || \
+            curl -L -f -o $PROV https://maven.aliyun.com/repository/public/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$PROV || \
+            { echo "Failed to download $PROV"; exit 1; }
+      
+            # bcpkix
+            curl -L -f -o $PKIX https://repo1.maven.org/maven2/org/bouncycastle/bcpkix-${{ env.BC_ART }}/${{ env.BC_VER }}/$PKIX || \
+            curl -L -f -o $PKIX https://maven.aliyun.com/repository/public/org/bouncycastle/bcpkix-${{ env.BC_ART }}/${{ env.BC_VER }}/$PKIX || \
+            { echo "Failed to download $PKIX"; exit 1; }
+      
+            echo "Download completed. Verifying integrity..."
+            ls -lh $PROV $PKIX
+      
+            unzip -qq -t $PROV >/dev/null && echo "$PROV is valid" || { echo "$PROV corrupted!"; rm -f $PROV; exit 1; }
+            unzip -qq -t $PKIX >/dev/null && echo "$PKIX is valid" || { echo "$PKIX corrupted!"; rm -f $PKIX; exit 1; }
           else
-          echo "Using cached BC jars."
+            echo "Using cached BC jars."
           fi
 
       - name: Clone AOSP repositories
