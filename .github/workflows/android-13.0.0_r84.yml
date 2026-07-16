@@ -133,6 +133,6 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: signapk-android12
+          name: signapk-${{ env.TAG }}
           path: ${{ env.OUT }}
           retention-days: 14
