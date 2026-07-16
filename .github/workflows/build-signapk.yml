@@ -91,6 +91,7 @@ jobs:
           javac -version
           if [[ "${{ matrix.java_version }}" == "8" ]]; then
             java -version 2>&1 | grep -q "1.8" || exit 1
+          fi
         if: env.SKIP_JOB != 'true'
       - name: Cache AOSP & BC Lib
         uses: actions/cache@v4
