@@ -54,19 +54,21 @@ jobs:
             java_version: '8'
     steps:
       # ========== 新增分支过滤步骤，解决单选失效 ==========
-      - name: Skip check (Filter selected branch)
-        id: skip_check
+      - name: Judge whether to skip this matrix branch
+        id: judge_skip
         run: |
           INPUT_BRANCH=${{ github.event.inputs.target_branch }}
           CURRENT_BRANCH=${{ matrix.android_branch }}
-          echo "Input select: $INPUT_BRANCH , Current matrix: $CURRENT_BRANCH"
+          echo "User selected branch: $INPUT_BRANCH"
+          echo "Current matrix branch: $CURRENT_BRANCH"
           if [[ "$INPUT_BRANCH" != "all" && "$INPUT_BRANCH" != "$CURRENT_BRANCH" ]]; then
             echo "SKIP_JOB=true" >> $GITHUB_ENV
-            echo "This matrix branch not match your select, skip all following steps"
+            echo "Match failed, skip all steps of this job"
           else
-            echo "SKIP_JOB=false" >> $GITHUB
+            echo "SKIP_JOB=false" >> $GITHUB_ENV
+            echo "Match success, execute full build flow"
           fi
-      - name: Stop job if mismatch
+      - name: Exit if skip
         if: env.SKIP_JOB == 'true'
         run: exit 0
 
