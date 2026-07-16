@@ -210,7 +210,6 @@ jobs:
           ls -la "$TARGET_ROOT/build/tools/signapk/" "$TARGET_ROOT/apksig/" "$TARGET_ROOT/libcore/"
         if: env.SKIP_JOB != 'true'
       - name: Copy Build Script & Modify SignApk.java imports
-        if: env.SKIP_JOB != 'true'
         env:
           AOSP_DIR: ${{ env.AOSP_BASE_DIR }}/${{ env.TARGET_BRANCH }}
           BC_CACHE_DIR: ${{ env.BC_BASE_DIR }}/bc-${{ env.BC_VERSION }}
