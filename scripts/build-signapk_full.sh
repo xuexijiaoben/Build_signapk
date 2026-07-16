@@ -32,17 +32,31 @@ CP="${BC_PROV}:${BC_PKIX}"
 echo "BC Provider: $(basename $BC_PROV)"
 echo "BC PKIX: $(basename $BC_PKIX)"
 
-# 深度清理 SignApk.java
+# ==================== 关键修复 ====================
 JAVA_FILE="${SRC_SIGN}/com/android/signapk/SignApk.java"
 
+# 移除冲突 import
 sed -i '/DEROutputStream/d' "$JAVA_FILE"
 sed -i '/CMSObjectIdentifiers/d' "$JAVA_FILE"
 sed -i '/org\.bouncycastle\.asn1\.cms/d' "$JAVA_FILE"
 sed -i '/OpenSSLProvider/d' "$JAVA_FILE"
 sed -i '/org\.conscrypt/d' "$JAVA_FILE"
 
-# 替换 DEROutputStream 为兼容写法（关键修复）
-sed -i 's/new DEROutputStream(out)/new org.bouncycastle.asn1.DEROutputStream(out)/' "$JAVA_FILE" || true
+# 替换 DEROutputStream 代码块为兼容写法
+cat > /tmp/patch.cms << 'EOF'
+        try (ASN1InputStream asn1 = new ASN1InputStream(sigData.getEncoded())) {
+            try (org.bouncycastle.asn1.DEROutputStream dos = new org.bouncycastle.asn1.DEROutputStream(out)) {
+                dos.writeObject(asn1.readObject());
+            }
+        }
+EOF
+
+sed -i '/try (ASN1InputStream asn1 = new ASN1InputStream(sigData.getEncoded())) {/,/}/c\
+        try (ASN1InputStream asn1 = new ASN1InputStream(sigData.getEncoded())) {\
+            try (org.bouncycastle.asn1.DEROutputStream dos = new org.bouncycastle.asn1.DEROutputStream(out)) {\
+                dos.writeObject(asn1.readObject());\
+            }\
+        }' "$JAVA_FILE"
 
 echo "=== Collecting source files ==="
 find "$SRC_SIGN" -name "*.java" > sources.txt
