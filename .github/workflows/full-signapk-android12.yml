@@ -1,7 +1,8 @@
-name: full SignApk android-12.0.0_r1
+name: Build SignApk android-12.0.0_r1
 
 on:
   workflow_dispatch:
+
 env:
   TAG: android-12.0.0_r1
   ROOT: ${{ github.workspace }}/aosp-src
@@ -52,30 +53,24 @@ jobs:
           set -eo pipefail
           mkdir -p ${{ env.BC_CACHE }}
           cd ${{ env.BC_CACHE }}
-    
+          
           PROV=bcprov-${{ env.BC_ART }}-${{ env.BC_VER }}.jar
-          PKIX=bcpkix-${{ env.BC_ART }}-${{ env.BC_VER }}.jar   # ← 关键修复：加上 -jdk15on
+          PKIX=bcpkix-${{ env.BC_ART }}-${{ env.BC_VER }}.jar
 
           if [[ ! -f $PROV || ! -f $PKIX ]]; then
             echo "Downloading BouncyCastle jars..."
-      
-            # bcprov
             curl -L -f -o $PROV https://repo1.maven.org/maven2/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$PROV || \
             curl -L -f -o $PROV https://maven.aliyun.com/repository/public/org/bouncycastle/bcprov-${{ env.BC_ART }}/${{ env.BC_VER }}/$PROV || \
             { echo "Failed to download $PROV"; exit 1; }
-      
-            # bcpkix
+            
             curl -L -f -o $PKIX https://repo1.maven.org/maven2/org/bouncycastle/bcpkix-${{ env.BC_ART }}/${{ env.BC_VER }}/$PKIX || \
             curl -L -f -o $PKIX https://maven.aliyun.com/repository/public/org/bouncycastle/bcpkix-${{ env.BC_ART }}/${{ env.BC_VER }}/$PKIX || \
             { echo "Failed to download $PKIX"; exit 1; }
-      
-            echo "Download completed. Verifying integrity..."
+            
+            echo "Download completed. Verifying..."
             ls -lh $PROV $PKIX
-      
-            unzip -qq -t $PROV >/dev/null && echo "$PROV is valid" || { echo "$PROV corrupted!"; rm -f $PROV; exit 1; }
-            unzip -qq -t $PKIX >/dev/null && echo "$PKIX is valid" || { echo "$PKIX corrupted!"; rm -f $PKIX; exit 1; }
-          else
-            echo "Using cached BC jars."
+            unzip -qq -t $PROV >/dev/null && echo "$PROV valid" || { echo "$PROV corrupted"; rm -f $PROV; exit 1; }
+            unzip -qq -t $PKIX >/dev/null && echo "$PKIX valid" || { echo "$PKIX corrupted"; rm -f $PKIX; exit 1; }
           fi
 
       - name: Clone AOSP repositories
@@ -85,26 +80,26 @@ jobs:
           cd ${{ env.ROOT }}
           git clone --depth 1 -b ${{ env.TAG }} https://android.googlesource.com/platform/build build
           git clone --depth 1 -b ${{ env.TAG }} https://android.googlesource.com/platform/tools/apksig apksig
+          git clone --depth 1 -b ${{ env.TAG }} https://android.googlesource.com/platform/libcore libcore
           ls -la
 
       - name: Prepare compile folder
         run: |
           set -eo pipefail
           SIGNAPK=${{ env.ROOT }}/build/tools/signapk
-      
+
           mkdir -p $SIGNAPK/libs
           cp ${{ env.BC_CACHE }}/*.jar $SIGNAPK/libs/
           cp ${{ github.workspace }}/self-repo/scripts/build-signapk_full.sh $SIGNAPK/
           chmod +x $SIGNAPK/build-signapk_full.sh
 
+          # 清理冲突 import
           JAVA_FILE=$SIGNAPK/src/com/android/signapk/SignApk.java
-          # 更彻底清理
-          sed -i '/org\.bouncycastle/d' "$JAVA_FILE"
           sed -i '/org\.conscrypt/d' "$JAVA_FILE"
-          sed -i '/import .*apksig/d' "$JAVA_FILE" 2>/dev/null || true
+          sed -i '/import .*OpenSSLProvider/d' "$JAVA_FILE"
 
           echo "=== Source check ==="
-          ls -la $SIGNAPK/src/com/android/signapk/
+          ls -la $SIGNAPK/src/com/android/signapk/ | head -10
 
       - name: Compile signapk.jar
         env:
@@ -126,7 +121,7 @@ jobs:
           BouncyCastle: ${{ env.BC_VER }} ${{ env.BC_ART }}
 
           Usage:
-          java -cp "signapk.jar:bcprov-${{ env.BC_ART }}-${{ env.BC_VER }}.jar:bcpkix-${{ env.BC_VER }}.jar" com.android.signapk.SignApk
+          java -cp "signapk.jar:bcprov-${{ env.BC_ART }}-${{ env.BC_VER }}.jar:bcpkix-${{ env.BC_ART }}-${{ env.BC_VER }}.jar" com.android.signapk.SignApk
           EOF
 
       - name: Upload artifact
