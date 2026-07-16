@@ -219,7 +219,7 @@ jobs:
           mkdir -p "$SIGNAPK_PATH/libs"
           cp "$BC_CACHE_DIR"/bc*.jar "$SIGNAPK_PATH/libs/"
           cp main-repo/scripts/build-signapk.sh "$SIGNAPK_PATH/"
-          chmod +x "$SIGNAPK_PATH/"
+          chmod +x "$SIGNAPK_PATH/build-signapk.sh"
           cp -r main-repo/test "$SIGNAPK_PATH/" 2>/dev/null || true
           # 直接覆写编译脚本，彻底解决apksig源码路径缺失
           cat > "$SIGNAPK_PATH/build-signapk.sh" << 'EOF'
