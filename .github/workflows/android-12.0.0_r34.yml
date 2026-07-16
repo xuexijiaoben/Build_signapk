@@ -95,7 +95,9 @@ jobs:
           sed -i 's/DEROutputStream/ASN1OutputStream/g' "$JAVA_FILE"
           sed -i '/import org.bouncycastle.asn1.DEROutputStream;/d' "$JAVA_FILE"
           sed -i '/import org.bouncycastle.asn1;/a import org.bouncycastle.asn1.ASN1OutputStream;' "$JAVA_FILE"
-          echo "=== Source check ==="
+          # 3 新增：修复type变量未初始化编译报错
+          sed -i 's/ASN1ObjectIdentifier type;/ASN1ObjectIdentifier type = null;/g' "$JAVA_FILE"
+          echo "=== Source file check finished ==="
           ls -la $SIGNAPK/src/com/android/signapk/
 
       - name: Compile signapk.jar
